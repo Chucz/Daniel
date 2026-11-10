@@ -1,0 +1,1970 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>EduScale - Controle de Faltas e Substituições</title>
+  <meta name="description" content="Aplicativo PWA Apple HIG para controle escolar de faltas de professores e alocação rápida de substitutos." />
+
+  <!-- PWA & Apple iOS Meta Tags -->
+  <meta name="theme-color" content="#F5F5F7">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="EduScale">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+  <link rel="icon" type="image/png" href="/icon.png">
+  <link rel="manifest" href="/manifest.json">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="EduScale - Controle de Faltas e Substituições" />
+  <meta property="og:description" content="Aplicativo PWA Apple HIG para controle escolar de faltas de professores e alocação rápida de substitutos." />
+  <meta property="og:type" content="website" />
+
+  <!-- CDN Scripts -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="/vendor/jspdf.umd.min.js"></script>
+  <script src="/vendor/jspdf.plugin.autotable.min.js"></script>
+
+  <link rel="stylesheet" href="/auth.css">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", -apple-system, system-ui, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-font-smoothing: antialiased;
+      background-color: #F5F5F7;
+      color: #1D1D1F;
+    }
+    .ios-blur {
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .touch-target {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    @keyframes highlightPulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 113, 227, 0.7); }
+      50% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(0, 113, 227, 0); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 113, 227, 0); }
+    }
+    .slot-highlight {
+      animation: highlightPulse 1.2s ease-in-out 2;
+      border-color: #0071E3 !important;
+      ring: 2px solid #0071E3;
+    }
+  </style>
+</head>
+<body class="min-h-screen pb-20 selection:bg-blue-100 selection:text-blue-900">
+  <div id="auth"><section class="auth-screen"><p class="auth-check" role="status"><span class="auth-spinner" aria-hidden="true"></span>Verificando acesso…</p></section></div>
+  <div id="app" hidden></div>
+  <script src="/auth.js"></script>
+
+  <script>
+    // Register a same-origin service worker; blob URLs are unsupported here.
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((error) => {
+          console.error('Não foi possível registrar o PWA:', error);
+        });
+      });
+    }
+
+    let deferredInstallPrompt = null;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true ||
+      document.referrer.includes('android-app://');
+
+    const isIOS = (/iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase()) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && !isStandalone;
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      pwaState.canInstall = true;
+      renderApp();
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      pwaState.isInstalled = true;
+      pwaState.canInstall = false;
+      showToast('EduScale instalado com sucesso na sua tela inicial!');
+      renderApp();
+    });
+
+    const pwaState = {
+      canInstall: false,
+      isInstalled: isStandalone,
+      showIOSGuide: false,
+      showGeneralGuide: false
+    };
+
+    async function triggerInstallApp() {
+      if (deferredInstallPrompt) {
+        const installPrompt = deferredInstallPrompt;
+        deferredInstallPrompt = null;
+        pwaState.canInstall = false;
+        try {
+          await installPrompt.prompt();
+          await installPrompt.userChoice;
+        } catch (error) {
+          console.error('Não foi possível abrir a instalação:', error);
+          pwaState.showGeneralGuide = true;
+        }
+        renderApp();
+      } else if (isIOS) {
+        pwaState.showIOSGuide = true;
+        renderApp();
+      } else {
+        pwaState.showGeneralGuide = true;
+        renderApp();
+      }
+    }
+
+    // ==========================================
+    // 2. CONFIGURAÇÕES E DADOS DA ESCOLA
+    // ==========================================
+    const WEEK_DAYS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira'];
+    const WEEK_SHORT = {
+      'Segunda-feira': 'Seg',
+      'Terça-feira': 'Ter',
+      'Quarta-feira': 'Qua',
+      'Quinta-feira': 'Qui',
+      'Sexta-feira': 'Sex'
+    };
+
+    const CLASSES_BY_CATEGORY = {
+      'Ensino Fundamental': ['6º Ano A', '6º Ano B', '7º Ano A', '7º Ano B', '8º Ano A', '8º Ano B', '9º Ano A', '9º Ano B'],
+      'Ensino Médio': ['1º EM A', '1º EM B', '1º EM C', '1º EM D', '2º EM A', '2º EM B', '2º EM C', '2º EM D', '3º EM A', '3º EM B', '3º EM C', '3º EM D'],
+      'Ensino Médio Técnico': ['2º Técnico', '3º Técnico']
+    };
+
+    const CLASSES_BY_SHIFT = {
+      'Manhã': ['9º Ano A', '9º Ano B', '1º EM A', '1º EM B', '1º EM C', '2º EM A', '2º EM B', '2º EM C', '3º EM A', '3º EM B', '3º EM C', '2º Técnico', '3º Técnico'],
+      'Tarde': ['6º Ano A', '6º Ano B', '7º Ano A', '7º Ano B', '8º Ano A', '8º Ano B'],
+      'Noite': ['1º EM D', '2º EM D', '3º EM D']
+    };
+
+    // Turmas antigas sem letra são preservadas apenas na primeira sala correspondente.
+    // Simplifica os nomes exibidos sem alterar as chaves das grades salvas.
+    function formatClassName(className) {
+      return className.replace(/^(\dº) (?:EM|Ano) ([A-D])$/, '$1 $2');
+    }
+
+    const LEGACY_CLASSES = {
+      '9º Ano A': '9º Ano EF', '6º Ano A': '6º Ano EF',
+      '7º Ano A': '7º Ano EF', '8º Ano A': '8º Ano EF',
+      '1º EM A': '1º Ano EM', '2º EM A': '2º Ano EM', '3º EM A': '3º Ano EM',
+      '1º EM D': '1º Ano EM', '2º EM D': '2º Ano EM', '3º EM D': '3º Ano EM',
+      '2º Técnico': '2º Ano EM Técnico', '3º Técnico': '3º Ano EM Técnico'
+    };
+
+    function classesForCategory(category) {
+      return CLASSES_BY_SHIFT[state.selectedShift].filter(cls => CLASSES_BY_CATEGORY[category].includes(cls));
+    }
+
+    function selectShift(shift) {
+      state.selectedShift = shift;
+      state.selectedClass = CLASSES_BY_SHIFT[shift][0];
+      state.selectedCategory = Object.keys(CLASSES_BY_CATEGORY).find(cat => CLASSES_BY_CATEGORY[cat].includes(state.selectedClass));
+      state.activeBottomSheetSlotId = null;
+      state.highlightedSlotId = null;
+      renderApp();
+    }
+
+    const SHIFTS = {
+      'Manhã': [
+        { id: 'm1', label: '1ª Aula', time: '07:00 - 07:50' },
+        { id: 'm2', label: '2ª Aula', time: '07:50 - 08:40' },
+        { id: 'm3', label: '3ª Aula', time: '08:40 - 09:30' },
+        { id: 'm_rec', label: 'RECREIO (20 min)', time: '09:30 - 09:50', isRecess: true },
+        { id: 'm4', label: '4ª Aula', time: '09:50 - 10:40' },
+        { id: 'm5', label: '5ª Aula', time: '10:40 - 11:30' },
+        { id: 'm6', label: '6ª Aula', time: '11:30 - 12:20' }
+      ],
+      'Tarde': [
+        { id: 't1', label: '1ª Aula', time: '13:00 - 13:50' },
+        { id: 't2', label: '2ª Aula', time: '13:50 - 14:40' },
+        { id: 't3', label: '3ª Aula', time: '14:40 - 15:30' },
+        { id: 't_rec', label: 'RECREIO (20 min)', time: '15:30 - 15:50', isRecess: true },
+        { id: 't4', label: '4ª Aula', time: '15:50 - 16:40' },
+        { id: 't5', label: '5ª Aula', time: '16:40 - 17:30' },
+        { id: 't6', label: '6ª Aula', time: '17:30 - 18:20' }
+      ],
+      'Noite': [
+        { id: 'n1', label: '1ª Aula', time: '19:00 - 19:45' },
+        { id: 'n2', label: '2ª Aula', time: '19:45 - 20:30' },
+        { id: 'n_rec', label: 'RECREIO (15 min)', time: '20:30 - 20:45', isRecess: true },
+        { id: 'n3', label: '3ª Aula', time: '20:45 - 21:30' },
+        { id: 'n4', label: '4ª Aula', time: '21:30 - 22:15' },
+        { id: 'n5', label: '5ª Aula', time: '22:15 - 23:00' }
+      ]
+    };
+
+    function getSubName(sub) {
+      if (!sub) return '';
+      return typeof sub === 'string' ? sub : (sub.name || '');
+    }
+
+    function getSubPhone(sub) {
+      if (!sub || typeof sub === 'string') return '';
+      return sub.phone || '';
+    }
+
+    // ==========================================
+    // 3. ESTADO GLOBAL DA APLICAÇÃO
+    // ==========================================
+    // Dados antigos de demonstração do localStorage não são importados.
+    let persistenceReady = false;
+    let persistenceError = false;
+    let saveQueue = Promise.resolve();
+
+    const state = {
+      selectedDay: 'Segunda-feira',
+      selectedShift: 'Manhã',
+      selectedCategory: 'Ensino Fundamental',
+      selectedClass: '9º Ano A',
+      teachers: { titulares: [], substitutos: [] },
+      slots: {},
+
+      // Controle de Busca Global
+      globalSearchQuery: '',
+      isSearchDropdownOpen: false,
+      trackedSubstituteName: null,
+
+      // Modais e Gavetas
+      activeBottomSheetSlotId: null,
+      assignTitularModalSlotId: null, // Modal para Atribuir/Editar Titular no bloco
+      removeTitularConfirmSlotId: null, // Confirmação de exclusão do Titular no bloco
+      isManagementModalOpen: false,
+      isReportModalOpen: false,
+      reportPeriod: 'day',
+      reportDay: 'Segunda-feira',
+      conflictAlert: null,
+
+      // Filtro lateral
+      sidebarSearch: '',
+      highlightedSlotId: null,
+      toast: null
+    };
+
+    function initDefaultSlots() {
+      const savedSlots = state.slots;
+      state.slots = {};
+      WEEK_DAYS.forEach(day => {
+        Object.keys(SHIFTS).forEach(shift => {
+          CLASSES_BY_SHIFT[shift].forEach(className => {
+            SHIFTS[shift].filter(slot => !slot.isRecess).forEach(slot => {
+              const id = `${day}__${shift}__${className}__${slot.id}`;
+              const legacyClass = LEGACY_CLASSES[className];
+              const legacyId = `${day}__${shift}__${legacyClass}__${slot.id}`;
+              const saved = savedSlots[id] || (legacyClass ? savedSlots[legacyId] : undefined);
+              state.slots[id] = {
+                id, day, shift, className, slotId: slot.id,
+                slotLabel: slot.label, timeRange: slot.time,
+                regularTeacher: saved?.regularTeacher || '',
+                status: saved?.status || 'regular',
+                substituteTeacher: saved?.substituteTeacher || null
+              };
+            });
+          });
+        });
+      });
+    }
+
+    function saveState() {
+      if (!persistenceReady || !authState.authenticated) return;
+      const body = JSON.stringify({ teachers: state.teachers, slots: state.slots });
+      saveQueue = saveQueue.then(async () => {
+        try {
+          if (!authState.authenticated) return;
+          const response = await fetch('/.netlify/functions/schedule', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body
+          });
+          if (!response.ok) throw new Error('save');
+          persistenceError = false;
+        } catch {
+          persistenceError = true;
+        }
+        renderApp();
+      });
+      return saveQueue;
+    }
+
+    async function initializeApp() {
+      if (!authState.authenticated) return;
+      document.getElementById('app').innerHTML = '<p class="p-8 text-center">Carregando grade…</p>';
+      try {
+        const response = await fetch('/.netlify/functions/schedule', { cache: 'no-store' });
+        if (response.status === 401) return;
+        if (!response.ok) throw new Error('load');
+        const data = await response.json();
+        state.teachers = data.teachers || { titulares: [], substitutos: [] };
+        state.slots = data.slots || {};
+        initDefaultSlots();
+        persistenceReady = true;
+        renderApp();
+      } catch {
+        document.getElementById('app').innerHTML = '<div class="p-8 text-center"><p>Não foi possível carregar a grade. Verifique sua conexão.</p><button class="mt-4 underline" onclick="initializeApp()">Tentar novamente</button></div>';
+      }
+    }
+
+    function showToast(message) {
+      state.toast = message;
+      renderApp();
+      setTimeout(() => {
+        if (state.toast === message) {
+          state.toast = null;
+          renderApp();
+        }
+      }, 2800);
+    }
+
+    // ==========================================
+    // 4. GESTÃO DIRETA DO PROFESSOR TITULAR NO BLOCO
+    // ==========================================
+    function openAssignTitularModal(slotId) {
+      state.assignTitularModalSlotId = slotId;
+      renderApp();
+    }
+
+    function saveTitularToSlot(slotId, teacherName) {
+      if (!state.slots[slotId]) return;
+      const cleanName = teacherName.trim();
+      if (!cleanName) return;
+
+      // Se o professor for novo, adiciona à lista geral de titulares
+      if (!state.teachers.titulares.includes(cleanName)) {
+        state.teachers.titulares.push(cleanName);
+      }
+
+      state.slots[slotId].regularTeacher = cleanName;
+      state.slots[slotId].status = 'regular';
+      state.slots[slotId].substituteTeacher = null;
+      state.assignTitularModalSlotId = null;
+      saveState();
+      renderApp();
+      showToast(`Prof. ${cleanName} atribuído(a) ao horário!`);
+    }
+
+    function confirmRemoveTitularFromSlot(slotId) {
+      state.removeTitularConfirmSlotId = slotId;
+      renderApp();
+    }
+
+    function executeRemoveTitularFromSlot(slotId) {
+      if (!state.slots[slotId]) return;
+      state.slots[slotId].regularTeacher = '';
+      state.slots[slotId].status = 'regular';
+      state.slots[slotId].substituteTeacher = null;
+      state.removeTitularConfirmSlotId = null;
+      saveState();
+      renderApp();
+      showToast('Professor desvinculado. O horário agora está sem professor atribuído.');
+    }
+
+    // ==========================================
+    // 5. DETECÇÃO DE CONFLITO DE HORÁRIO
+    // ==========================================
+    function checkScheduleConflict(substituteName, targetSlotId) {
+      const targetSlot = state.slots[targetSlotId];
+      if (!targetSlot) return null;
+
+      const subClean = substituteName.trim().toLowerCase();
+
+      for (const key of Object.keys(state.slots)) {
+        if (key === targetSlotId) continue;
+        const slot = state.slots[key];
+        if (
+          slot.day === targetSlot.day &&
+          slot.shift === targetSlot.shift &&
+          slot.slotId === targetSlot.slotId &&
+          slot.status === 'substituido' &&
+          slot.substituteTeacher &&
+          slot.substituteTeacher.trim().toLowerCase() === subClean
+        ) {
+          return slot;
+        }
+      }
+      return null;
+    }
+
+    // ==========================================
+    // 6. AÇÕES DE FALTAS E SUBSTITUIÇÕES
+    // ==========================================
+    function registerFalta(slotId) {
+      if (!state.slots[slotId]) return;
+      state.slots[slotId].status = 'falta';
+      state.slots[slotId].substituteTeacher = null;
+      saveState();
+      renderApp();
+      showToast('Falta registrada. Aula marcada como vaga.');
+    }
+
+    function undoFalta(slotId) {
+      if (!state.slots[slotId]) return;
+      state.slots[slotId].status = 'regular';
+      state.slots[slotId].substituteTeacher = null;
+      saveState();
+      renderApp();
+      showToast('Falta desfeita. Professor titular restaurado.');
+    }
+
+    function removeSubstitute(slotId) {
+      if (!state.slots[slotId]) return;
+      state.slots[slotId].status = 'falta';
+      state.slots[slotId].substituteTeacher = null;
+      saveState();
+      renderApp();
+      showToast('Substituto removido. Aula permanece vaga.');
+    }
+
+    function attemptAssignSubstitute(slotId, substituteName, force = false) {
+      const conflict = checkScheduleConflict(substituteName, slotId);
+      if (conflict && !force) {
+        state.conflictAlert = {
+          subName: substituteName,
+          slotId: slotId,
+          conflictSlot: conflict
+        };
+        renderApp();
+        return false;
+      }
+
+      state.slots[slotId].status = 'substituido';
+      state.slots[slotId].substituteTeacher = substituteName;
+      state.activeBottomSheetSlotId = null;
+      state.conflictAlert = null;
+      const saving = saveState();
+      renderApp();
+      showToast('Salvando alocação…');
+      Promise.resolve(saving).then(() => {
+        showToast(persistenceError ? 'Não foi possível salvar. Tente novamente no aviso acima.' : `Prof. ${substituteName} alocado(a) com sucesso!`);
+        document.querySelector('[data-allocation-trigger]')?.focus({ preventScroll: true });
+      });
+      return true;
+    }
+
+    function navigateToSlot(day, shift, className, slotId) {
+      state.selectedDay = day;
+      state.selectedShift = shift;
+      state.selectedClass = className;
+
+      for (const [cat, classes] of Object.entries(CLASSES_BY_CATEGORY)) {
+        if (classes.includes(className)) {
+          state.selectedCategory = cat;
+          break;
+        }
+      }
+
+      state.trackedSubstituteName = null;
+      state.isSearchDropdownOpen = false;
+      state.globalSearchQuery = '';
+      state.highlightedSlotId = slotId;
+
+      renderApp();
+
+      setTimeout(() => {
+        const el = document.getElementById(`slot-${slotId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('slot-highlight');
+          setTimeout(() => {
+            el.classList.remove('slot-highlight');
+            state.highlightedSlotId = null;
+          }, 2400);
+        }
+      }, 120);
+    }
+
+    // ==========================================
+    // 7. CONTROLADOR DE BUSCA GLOBAL (SEM PERDA DE FOCO)
+    // ==========================================
+    function handleGlobalSearchInput(val) {
+      state.globalSearchQuery = val;
+      updateSearchDropdown();
+    }
+
+    function handleGlobalSearchFocus() {
+      state.isSearchDropdownOpen = true;
+      updateSearchDropdown();
+    }
+
+    function handleGlobalSearchClear() {
+      state.globalSearchQuery = '';
+      state.isSearchDropdownOpen = false;
+      const input = document.getElementById('globalSearchInput');
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+      updateSearchDropdown();
+    }
+
+    function handleGlobalSearchKeyDown(e) {
+      if (e.key === 'Escape') {
+        state.isSearchDropdownOpen = false;
+        const dropdown = document.getElementById('searchDropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+        e.target.blur();
+      } else if (e.key === 'Enter') {
+        const query = state.globalSearchQuery.trim().toLowerCase();
+        if (!query) return;
+        const matches = state.teachers.substitutos.filter(s =>
+          getSubName(s).toLowerCase().includes(query)
+        );
+        if (matches.length > 0) {
+          openSubstituteTracker(getSubName(matches[0]));
+        }
+      }
+    }
+
+    function updateSearchDropdown() {
+      const container = document.getElementById('searchDropdown');
+      const clearBtn = document.getElementById('searchClearBtn');
+      const hintBadge = document.getElementById('searchHintBadge');
+
+      if (clearBtn) {
+        if (state.globalSearchQuery.trim() !== '') {
+          clearBtn.classList.remove('hidden');
+          if (hintBadge) hintBadge.classList.add('hidden');
+        } else {
+          clearBtn.classList.add('hidden');
+          if (hintBadge) hintBadge.classList.remove('hidden');
+        }
+      }
+
+      if (!container) return;
+
+      const query = state.globalSearchQuery.trim().toLowerCase();
+
+      if (!state.isSearchDropdownOpen || query === '') {
+        container.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+      }
+
+      const subsList = state.teachers.substitutos;
+      const searchMatches = subsList.filter(s =>
+        getSubName(s).toLowerCase().includes(query)
+      );
+
+      container.classList.remove('hidden');
+
+      if (searchMatches.length === 0) {
+        container.innerHTML = `
+          <div class="p-4 text-center text-xs text-[#86868B]">
+            Nenhum professor substituto encontrado com "<strong>${state.globalSearchQuery}</strong>".
+          </div>
+        `;
+      } else {
+        container.innerHTML = `
+          <div class="text-[10px] font-semibold tracking-wider text-[#86868B] uppercase px-3 py-1.5 flex items-center justify-between border-b border-[#E5E5EA]/70 mb-1">
+            <span>Professores Substitutos Correspondentes</span>
+            <span>${searchMatches.length}</span>
+          </div>
+          <div class="space-y-1 max-h-64 overflow-y-auto pr-1">
+            ${searchMatches.map(sub => {
+              const name = getSubName(sub);
+              const allAssigned = Object.values(state.slots).filter(s => s.status === 'substituido' && s.substituteTeacher === name);
+              const todayAssigned = allAssigned.filter(s => s.day === state.selectedDay);
+              const initials = name.split(' ').map(n=>n[0]).slice(0,2).join('');
+
+              return `
+                <div onclick="openSubstituteTracker('${name.replace(/'/g, "\\'")}')" class="p-2.5 hover:bg-[#F5F5F7] rounded-xl cursor-pointer flex items-center justify-between transition-colors group">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-[#0071E3]/10 text-[#0071E3] font-bold text-xs flex items-center justify-center">
+                      ${initials}
+                    </div>
+                    <div>
+                      <div class="text-xs font-semibold text-[#1D1D1F] group-hover:text-[#0071E3] transition-colors">${name}</div>
+                      <div class="text-[11px] text-[#86868B]">
+                        ${todayAssigned.length > 0 ? `<span class="text-blue-600 font-medium">${todayAssigned.length} aula(s) hoje</span>` : 'Disponível hoje'} · ${allAssigned.length} na semana
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-1.5 text-xs text-[#0071E3] font-medium opacity-85 group-hover:opacity-100">
+                    <span>Ver Espelho</span>
+                    <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      lucide.createIcons();
+    }
+
+    document.addEventListener('click', (e) => {
+      const searchBox = document.getElementById('globalSearchContainer');
+      if (searchBox && !searchBox.contains(e.target)) {
+        state.isSearchDropdownOpen = false;
+        const dropdown = document.getElementById('searchDropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+      }
+    });
+
+    // ==========================================
+    // 8. RELATÓRIO PDF DE SUBSTITUIÇÕES
+    // ==========================================
+    function openReportModal() {
+      state.reportDay = state.selectedDay;
+      state.isReportModalOpen = true;
+      renderApp();
+      document.getElementById('reportPeriod').focus();
+    }
+
+    function closeReportModal() {
+      state.isReportModalOpen = false;
+      renderApp();
+      document.querySelector('[data-report-button]')?.focus();
+    }
+
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && state.isReportModalOpen) closeReportModal();
+    });
+
+    function reportSlots() {
+      return Object.values(state.slots)
+        .filter(s => (s.status === 'falta' || s.status === 'substituido') &&
+          (state.reportPeriod === 'week' || s.day === state.reportDay))
+        .sort((a, b) => WEEK_DAYS.indexOf(a.day) - WEEK_DAYS.indexOf(b.day) ||
+          Object.keys(SHIFTS).indexOf(a.shift) - Object.keys(SHIFTS).indexOf(b.shift) ||
+          a.timeRange.localeCompare(b.timeRange) ||
+          a.className.localeCompare(b.className, 'pt-BR', { numeric: true }));
+    }
+
+    function exportPDF() {
+      try {
+        const list = reportSlots();
+        const pdf = new window.jspdf.jsPDF({ orientation: 'landscape' });
+        const period = state.reportPeriod === 'week' ? 'Semana toda (segunda a sexta)' : state.reportDay;
+        const assigned = list.filter(s => s.status === 'substituido' && s.substituteTeacher).length;
+        pdf.setFontSize(18);
+        pdf.text('EduScale | Substituições de aulas', 14, 18);
+        pdf.setFontSize(10);
+        pdf.text(`Período: ${period} | Todos os turnos e turmas`, 14, 26);
+        pdf.text(`Aulas: ${list.length} | Com substituto: ${assigned} | A definir: ${list.length - assigned}`, 14, 33);
+        pdf.text(`Emitido em: ${new Date().toLocaleString('pt-BR')}`, 14, 40);
+        if (list.length) {
+          pdf.autoTable({
+            startY: 46,
+            head: [['Dia', 'Turno', 'Turma', 'Aula / Horário', 'Professor titular', 'Professor substituto']],
+            body: list.map(s => [s.day, s.shift, formatClassName(s.className),
+              `${s.slotLabel}\n${s.timeRange}`, s.regularTeacher || 'Sem titular',
+              s.status === 'substituido' && s.substituteTeacher ? s.substituteTeacher : 'A definir']),
+            styles: { fontSize: 10, cellPadding: 3, overflow: 'linebreak' },
+            headStyles: { fillColor: [0, 113, 227] },
+            columnStyles: { 0: { cellWidth: 33 }, 1: { cellWidth: 22 }, 2: { cellWidth: 28 }, 3: { cellWidth: 40 } },
+            margin: { top: 15, bottom: 18 },
+            rowPageBreak: 'avoid'
+          });
+        } else {
+          pdf.text('Nenhuma falta ou substituição registrada neste período.', 14, 54);
+        }
+        const pages = pdf.getNumberOfPages();
+        for (let page = 1; page <= pages; page++) {
+          pdf.setPage(page);
+          pdf.setFontSize(9);
+          pdf.text(`Página ${page} de ${pages}`, 283, 202, { align: 'right' });
+        }
+        const suffix = state.reportPeriod === 'week' ? 'semana' : WEEK_SHORT[state.reportDay].toLowerCase();
+        pdf.save(`eduscale_substituicoes_${suffix}_${new Date().toISOString().slice(0, 10)}.pdf`);
+        closeReportModal();
+        showToast('Download do PDF iniciado.');
+      } catch (error) {
+        showToast('Não foi possível gerar o PDF. Tente novamente.');
+      }
+    }
+
+    function renderReportModal() {
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 ios-blur" onclick="closeReportModal()">
+          <div role="dialog" aria-modal="true" aria-labelledby="reportTitle" class="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 space-y-4" onclick="event.stopPropagation()">
+            <div class="flex items-center justify-between gap-3">
+              <h3 id="reportTitle" class="text-base font-bold">Relatório de substituições</h3>
+              <button aria-label="Fechar relatório" class="touch-target rounded-xl" onclick="closeReportModal()">×</button>
+            </div>
+            <p class="text-sm text-[#6E6E73]">Aulas com falta, professor titular e substituto de todos os turnos e turmas. Aulas sem substituto aparecem como “A definir”.</p>
+            <label for="reportPeriod" class="block text-xs font-semibold">Período</label>
+            <select id="reportPeriod" class="w-full p-3 bg-[#F5F5F7] rounded-xl text-sm" onchange="state.reportPeriod = this.value; renderApp(); document.getElementById('reportPeriod').focus();">
+              <option value="day" ${state.reportPeriod === 'day' ? 'selected' : ''}>Um dia</option>
+              <option value="week" ${state.reportPeriod === 'week' ? 'selected' : ''}>Semana toda</option>
+            </select>
+            ${state.reportPeriod === 'day' ? `
+              <label for="reportDay" class="block text-xs font-semibold">Dia da semana</label>
+              <select id="reportDay" class="w-full p-3 bg-[#F5F5F7] rounded-xl text-sm" onchange="state.reportDay = this.value">
+                ${WEEK_DAYS.map(day => `<option ${day === state.reportDay ? 'selected' : ''}>${day}</option>`).join('')}
+              </select>` : ''}
+            <p class="text-xs text-[#86868B]">Usa a grade semanal atual. O PDF é baixado no aparelho conforme as configurações do navegador.</p>
+            <button onclick="exportPDF()" class="w-full touch-target py-3 bg-[#0071E3] text-white text-sm font-semibold rounded-xl">Baixar PDF</button>
+          </div>
+        </div>`;
+    }
+
+    // ==========================================
+    // 9. RENDERIZAÇÃO DA APLICAÇÃO (UI APPLE HIG)
+    // ==========================================
+    function renderApp() {
+      if (!authState.authenticated) return;
+      const root = document.getElementById('app');
+      const currentShiftSlots = SHIFTS[state.selectedShift] || [];
+
+      const shiftSlotsList = Object.values(state.slots).filter(s => s.day === state.selectedDay && s.shift === state.selectedShift);
+      const totalVagasAll = Object.values(state.slots).filter(s => s.status === 'falta').length;
+      const totalVagasShift = shiftSlotsList.filter(s => s.status === 'falta').length;
+      const totalSubstituidasShift = shiftSlotsList.filter(s => s.status === 'substituido').length;
+      const totalRegularesShift = shiftSlotsList.filter(s => s.status === 'regular' && s.regularTeacher).length;
+      const totalSemProfessorShift = shiftSlotsList.filter(s => s.status === 'regular' && !s.regularTeacher).length;
+
+      const subsList = state.teachers.substitutos;
+
+      root.innerHTML = `
+        ${persistenceError ? '<div role="alert" class="bg-red-50 text-red-700 p-3 text-center text-sm">Alterações ainda não salvas. <button class="underline font-semibold" onclick="saveState()">Tentar salvar novamente</button></div>' : ''}
+        <!-- Top App Bar Apple HIG com Botão PWA e Busca Global -->
+        <header class="sticky top-0 z-40 bg-white/85 ios-blur border-b border-[#E5E5EA] px-4 sm:px-6 lg:px-8 py-3 transition-all">
+          <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
+
+            <button onclick="authLogout(this)" class="touch-target px-3 text-sm text-[#6E6E73] rounded-xl hover:bg-black/5 self-end md:order-last">Sair</button>
+            <!-- Zona de Marca EduScale -->
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <img src="/icon.png" alt="EduScale Icon" class="w-9 h-9 rounded-xl shadow-xs border border-[#E5E5EA] object-cover" />
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h1 class="text-base font-bold tracking-tight text-[#1D1D1F] leading-tight">EduScale</h1>
+                    ${totalVagasAll > 0 ? `
+                      <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
+                        <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                        ${totalVagasAll} ${totalVagasAll === 1 ? 'vaga' : 'vagas'}
+                      </span>
+                    ` : ''}
+                  </div>
+                  <p class="text-[11px] text-[#86868B] hidden sm:block">Controle de Faltas & Substitutos</p>
+                </div>
+              </div>
+
+              <!-- Ações no Mobile (PWA Install + Menu) -->
+              <div class="flex md:hidden items-center gap-1.5">
+                ${!pwaState.isInstalled ? `
+                  <button onclick="triggerInstallApp()" class="px-2.5 py-1.5 text-xs font-semibold text-[#0071E3] bg-[#0071E3]/10 border border-[#0071E3]/20 rounded-xl flex items-center gap-1 touch-target">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    <span>Instalar</span>
+                  </button>
+                ` : ''}
+                <button onclick="openTeacherManagement();" class="p-2 text-[#1D1D1F] bg-[#F5F5F7] border border-[#E5E5EA] rounded-xl touch-target">
+                  <i data-lucide="users" class="w-4 h-4 text-[#0071E3]"></i>
+                </button>
+                <button data-report-button aria-label="Relatório PDF" onclick="openReportModal()" class="p-2 text-white bg-[#0071E3] rounded-xl touch-target">
+                  <i data-lucide="file-text" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- 1. BARRA DE BUSCA GLOBAL ESTILO APPLE (Spotlight Search) -->
+            <div id="globalSearchContainer" class="relative flex-1 max-w-md mx-auto md:mx-4 w-full">
+              <div class="relative flex items-center">
+                <i data-lucide="search" class="w-4 h-4 text-[#86868B] absolute left-3.5 pointer-events-none"></i>
+                <input
+                  type="text"
+                  id="globalSearchInput"
+                  placeholder="Buscar e rastrear professor substituto..."
+                  value="${state.globalSearchQuery}"
+                  onfocus="handleGlobalSearchFocus()"
+                  oninput="handleGlobalSearchInput(this.value)"
+                  onkeydown="handleGlobalSearchKeyDown(event)"
+                  class="w-full text-xs sm:text-sm bg-[#E5E5EA]/50 hover:bg-[#E5E5EA]/70 focus:bg-white border border-transparent focus:border-[#0071E3] focus:ring-2 focus:ring-[#0071E3]/20 rounded-2xl py-2 pl-9 pr-9 outline-none transition-all placeholder:text-[#8E8E93]"
+                />
+                <button
+                  id="searchClearBtn"
+                  onclick="handleGlobalSearchClear()"
+                  class="absolute right-3 text-[#86868B] hover:text-[#1D1D1F] ${state.globalSearchQuery ? '' : 'hidden'}">
+                  <i data-lucide="x-circle" class="w-4 h-4"></i>
+                </button>
+                <span
+                  id="searchHintBadge"
+                  class="absolute right-3 text-[10px] text-[#86868B] bg-white border border-[#E5E5EA] px-1.5 py-0.5 rounded-md hidden sm:block ${state.globalSearchQuery ? 'hidden' : ''}">
+                  Rastrear
+                </span>
+              </div>
+
+              <!-- Lista Suspensa Preditiva Apple Search -->
+              <div
+                id="searchDropdown"
+                class="absolute left-0 right-0 top-full mt-2 bg-white/95 ios-blur border border-[#E5E5EA] rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150 ${state.isSearchDropdownOpen && state.globalSearchQuery.trim() !== '' ? '' : 'hidden'}">
+              </div>
+            </div>
+
+            <!-- Botões Desktop: Instalar PWA, Professores e Relatório PDF -->
+            <div class="hidden md:flex items-center gap-2">
+              ${!pwaState.isInstalled ? `
+                <button onclick="triggerInstallApp()" class="px-3.5 py-2 text-xs font-semibold text-[#0071E3] bg-[#0071E3]/10 hover:bg-[#0071E3]/20 border border-[#0071E3]/20 rounded-xl transition-all active:scale-[0.98] flex items-center gap-1.5 touch-target" title="Instalar aplicativo EduScale no celular ou computador">
+                  <i data-lucide="download" class="w-4 h-4 text-[#0071E3]"></i>
+                  <span>Instalar no Celular</span>
+                </button>
+              ` : `
+                <span class="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 rounded-xl">
+                  <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600"></i>
+                  <span>Instalado</span>
+                </span>
+              `}
+
+              <button onclick="openTeacherManagement();" class="px-3.5 py-2 text-xs font-medium text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E5E5EA] border border-[#E5E5EA] rounded-xl transition-all active:scale-[0.98] flex items-center gap-1.5 touch-target">
+                <i data-lucide="users" class="w-4 h-4 text-[#0071E3]"></i>
+                <span>Professores</span>
+              </button>
+
+              <button data-report-button aria-label="Relatório PDF" onclick="openReportModal()" class="px-3.5 py-2 text-xs font-medium text-white bg-[#0071E3] hover:bg-[#0077ED] rounded-xl shadow-xs transition-all active:scale-[0.98] flex items-center gap-1.5 touch-target">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                <span>Relatório PDF</span>
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <!-- Corpo Principal -->
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16 space-y-6">
+
+          <div class="flex flex-wrap items-center justify-between gap-3">
+          <div><h2 class="text-lg font-semibold tracking-tight">Alocação de substitutos</h2><p class="text-xs text-[#6E6E73]">Escolha uma aula vaga e confirme o professor responsável.</p></div>
+          <button data-allocation-trigger onclick="openBottomSheet()" class="touch-target px-4 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-sm font-semibold flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>Alocar Substituto</button>
+        </div>
+        <!-- Controles Segmentados Estilo iOS -->
+          <div class="space-y-3.5">
+            <!-- 1. DIAS DA SEMANA (Segunda a Sexta-feira) -->
+            <div class="space-y-1">
+              <div class="text-[11px] font-semibold text-[#86868B] uppercase tracking-wider px-1">Dia da Semana</div>
+              <div class="bg-[#E5E5EA]/75 p-1 rounded-2xl flex items-center gap-1 overflow-x-auto no-scrollbar shadow-inner">
+                ${WEEK_DAYS.map(day => {
+                  const dayVagas = Object.values(state.slots).filter(s => s.day === day && s.status === 'falta').length;
+                  const isActive = state.selectedDay === day;
+                  return `
+                    <button onclick="state.selectedDay = '${day}'; renderApp();"
+                      class="flex-1 min-w-[85px] py-2 px-3 text-xs sm:text-sm font-medium rounded-xl transition-all touch-target flex items-center justify-center gap-1.5 ${
+                        isActive ? 'bg-white text-[#1D1D1F] shadow-[0_2px_8px_rgba(0,0,0,0.12)] font-semibold' : 'text-[#8E8E93] hover:text-[#1D1D1F]'
+                      }">
+                      <span class="hidden sm:inline">${day}</span>
+                      <span class="sm:hidden">${WEEK_SHORT[day]}</span>
+                      ${dayVagas > 0 ? `
+                        <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-full ${isActive ? 'bg-red-500 text-white' : 'bg-red-100 text-red-700'}">
+                          ${dayVagas}
+                        </span>
+                      ` : ''}
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- 2. Turnos e Pílulas de Resumo -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+              <div class="bg-[#E5E5EA]/75 p-1 rounded-2xl inline-flex items-center gap-1 self-start shadow-inner">
+                ${['Manhã', 'Tarde', 'Noite'].map(shift => `
+                  <button onclick="selectShift('${shift}')"
+                    class="py-1.5 px-3.5 text-xs sm:text-sm font-medium rounded-xl transition-all touch-target ${
+                      state.selectedShift === shift ? 'bg-white text-[#1D1D1F] shadow-[0_2px_8px_rgba(0,0,0,0.12)] font-semibold' : 'text-[#8E8E93] hover:text-[#1D1D1F]'
+                    }">
+                    ${shift}
+                  </button>
+                `).join('')}
+              </div>
+
+              <!-- Indicadores de Status estilo Apple Health -->
+              <div class="flex items-center gap-2 overflow-x-auto text-xs font-medium text-[#6E6E73] py-0.5">
+                <span class="flex items-center gap-1.5 bg-white border border-[#E5E5EA] px-3 py-1.5 rounded-full shadow-2xs whitespace-nowrap">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span> ${totalRegularesShift} Presentes
+                </span>
+                ${totalSemProfessorShift > 0 ? `
+                  <span class="flex items-center gap-1.5 bg-gray-100 border border-gray-200 text-gray-700 px-3 py-1.5 rounded-full shadow-2xs whitespace-nowrap font-medium">
+                    <span class="w-2 h-2 rounded-full bg-gray-400"></span> ${totalSemProfessorShift} Sem Titular
+                  </span>
+                ` : ''}
+                <span class="flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-700 px-3 py-1.5 rounded-full shadow-2xs whitespace-nowrap font-semibold">
+                  <span class="w-2 h-2 rounded-full bg-red-500"></span> ${totalVagasShift} Vagas
+                </span>
+                <span class="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1.5 rounded-full shadow-2xs whitespace-nowrap">
+                  <span class="w-2 h-2 rounded-full bg-blue-500"></span> ${totalSubstituidasShift} Substituídas
+                </span>
+              </div>
+            </div>
+
+            <!-- 3. Seletor de Turmas Obrigatórias -->
+            <div class="bg-white border border-[#E5E5EA] p-3.5 sm:p-4 rounded-3xl shadow-xs space-y-3">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#E5E5EA] pb-2.5">
+                <div class="text-xs font-semibold text-[#1D1D1F] flex items-center gap-1.5">
+                  <span>Turma em Exibição:</span>
+                  <span class="text-[#0071E3] font-bold text-sm">${formatClassName(state.selectedClass)}</span>
+                </div>
+
+                <!-- Categoria da Turma -->
+                <div class="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                  ${Object.keys(CLASSES_BY_CATEGORY).filter(cat => classesForCategory(cat).length > 0).map(cat => `
+                    <button onclick="state.selectedCategory = '${cat}'; state.selectedClass = '${classesForCategory(cat)[0]}'; renderApp();"
+                      class="text-xs px-2.5 py-1.5 rounded-xl font-medium transition-colors whitespace-nowrap ${
+                        state.selectedCategory === cat ? 'bg-[#1D1D1F] text-white shadow-2xs' : 'text-[#6E6E73] hover:text-[#1D1D1F] hover:bg-[#F5F5F7]'
+                      }">
+                      ${cat}
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+
+              <!-- Lista de Turmas do Nível Atual -->
+              <div class="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                ${classesForCategory(state.selectedCategory).map(cls => {
+                  const isSelected = state.selectedClass === cls;
+                  const clsVagas = shiftSlotsList.filter(s => s.className === cls && s.status === 'falta').length;
+                  return `
+                    <button onclick="state.selectedClass = '${cls}'; renderApp();"
+                      class="whitespace-nowrap px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all duration-150 touch-target flex items-center justify-center text-center gap-1.5 ${
+                        isSelected ? 'bg-[#0071E3] text-white shadow-sm' : 'bg-[#F5F5F7] text-[#6E6E73] hover:text-[#1D1D1F] hover:bg-[#E5E5EA]'
+                      }">
+                      <span>${formatClassName(cls)}</span>
+                      ${clsVagas > 0 ? `
+                        <span class="text-[10px] px-1.5 py-0.2 rounded-full font-bold ${isSelected ? 'bg-white text-red-600' : 'bg-red-100 text-red-700'}">
+                          ${clsVagas}
+                        </span>
+                      ` : ''}
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+
+          <!-- Grade de Aulas e Painel Lateral Desktop -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+            <!-- Coluna de Horários e Aulas (Foco estrito: Horário + Nome do Professor/Alerta) -->
+            <div class="lg:col-span-8 space-y-3.5">
+              <div class="flex items-center justify-between px-1">
+                <div>
+                  <h2 class="text-base font-semibold text-[#1D1D1F] tracking-tight">Grade de Aulas • ${formatClassName(state.selectedClass)}</h2>
+                  <p class="text-xs text-[#86868B]">${state.selectedDay} · Turno da ${state.selectedShift}</p>
+                </div>
+                <div class="text-xs text-[#86868B] bg-white border border-[#E5E5EA] px-3 py-1.5 rounded-full shadow-2xs">
+                  ${currentShiftSlots.filter(s => !s.isRecess).length} aulas previstas
+                </div>
+              </div>
+
+              <div class="space-y-3">
+                ${currentShiftSlots.map(slotCfg => {
+                  if (slotCfg.isRecess) {
+                    return `
+                      <div class="bg-[#F5F5F7] border border-dashed border-[#D2D2D7] rounded-3xl py-3.5 px-5 flex items-center justify-between text-xs text-[#86868B] shadow-2xs">
+                        <div class="flex items-center gap-2.5">
+                          <div class="w-8 h-8 rounded-xl bg-white border border-[#E5E5EA] flex items-center justify-center text-[#86868B] shadow-xs">
+                            <i data-lucide="coffee" class="w-4 h-4"></i>
+                          </div>
+                          <div>
+                            <span class="font-semibold tracking-wide uppercase text-[11px] text-[#1D1D1F]">${slotCfg.label}</span>
+                            <span class="text-[11px] text-[#86868B] block">Intervalo escolar para alunos e professores</span>
+                          </div>
+                        </div>
+                        <span class="tabular-nums font-mono font-medium text-xs text-[#6E6E73]">${slotCfg.time}</span>
+                      </div>
+                    `;
+                  }
+
+                  const key = `${state.selectedDay}__${state.selectedShift}__${state.selectedClass}__${slotCfg.id}`;
+                  const slot = state.slots[key] || {
+                    id: key,
+                    day: state.selectedDay,
+                    shift: state.selectedShift,
+                    className: state.selectedClass,
+                    slotId: slotCfg.id,
+                    slotLabel: slotCfg.label,
+                    timeRange: slotCfg.time,
+                    regularTeacher: '',
+                    status: 'regular'
+                  };
+
+                  return renderClassSlotCard(slot);
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Painel Lateral Desktop de Professores Substitutos (Arrastar e Soltar + Rastreamento) -->
+            <div class="lg:col-span-4 space-y-4">
+              <div class="bg-white border border-[#E5E5EA] p-5 rounded-3xl shadow-xs space-y-4 sticky top-24">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <h3 class="text-sm font-semibold text-[#1D1D1F] tracking-tight">Professores Substitutos</h3>
+                    <p class="text-xs text-[#86868B]">Arraste para aula vaga ou clique para rastrear</p>
+                  </div>
+                  <span class="text-xs bg-[#F5F5F7] text-[#6E6E73] font-semibold px-2.5 py-1 rounded-full border border-[#E5E5EA]">
+                    ${subsList.length}
+                  </span>
+                </div>
+
+                <!-- Campo de busca na lista lateral -->
+                <div class="relative">
+                  <input
+                    type="text"
+                    placeholder="Filtrar substitutos..."
+                    value="${state.sidebarSearch}"
+                    oninput="state.sidebarSearch = this.value; renderApp();"
+                    class="w-full text-xs bg-[#F5F5F7] border border-transparent focus:border-[#0071E3] focus:bg-white rounded-xl py-2 pl-8 pr-3 outline-none transition-all placeholder:text-[#8E8E93]"
+                  />
+                  <i data-lucide="search" class="w-3.5 h-3.5 text-[#86868B] absolute left-2.5 top-2.5 pointer-events-none"></i>
+                </div>
+
+                <!-- Lista de Cards Arrastáveis -->
+                <div class="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                  ${subsList
+                    .filter(s => getSubName(s).toLowerCase().includes(state.sidebarSearch.toLowerCase()))
+                    .map(sub => {
+                      const name = getSubName(sub);
+                      const allSubSlots = Object.values(state.slots).filter(s => s.status === 'substituido' && s.substituteTeacher === name);
+                      const todayCount = allSubSlots.filter(s => s.day === state.selectedDay).length;
+                      const initials = name.split(' ').map(n=>n[0]).slice(0,2).join('');
+
+                      return `
+                        <div
+                          draggable="true"
+                          ondragstart="handleDragStart(event, '${name.replace(/'/g, "\\'")}')"
+                          class="group p-3 bg-[#F5F5F7] hover:bg-[#EBF3FF] border border-transparent hover:border-[#BFDBFE] rounded-2xl flex items-center justify-between cursor-grab active:cursor-grabbing transition-all select-none">
+                          <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-full bg-white border border-[#E5E5EA] flex items-center justify-center text-xs font-semibold text-[#0071E3] shadow-2xs group-hover:bg-[#0071E3] group-hover:text-white transition-colors">
+                              ${initials}
+                            </div>
+                            <div>
+                              <div class="text-xs font-medium text-[#1D1D1F] group-hover:text-[#0071E3]">${name}</div>
+                              <div class="text-[10px] text-[#86868B] flex items-center gap-1.5 mt-0.5">
+                                ${todayCount > 0 ? `
+                                  <span class="text-blue-600 font-medium">${todayCount} ${todayCount === 1 ? 'aula hoje' : 'aulas hoje'}</span>
+                                ` : `
+                                  <span class="text-emerald-600 font-medium">Disponível hoje</span>
+                                `}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div class="flex items-center gap-1">
+                            <button onclick="openSubstituteTracker('${name.replace(/'/g, "\\'")}')" title="Abrir Espelho de Aulas deste Substituto" class="p-1.5 text-[#86868B] hover:text-[#0071E3] hover:bg-white rounded-lg transition-colors">
+                              <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <i data-lucide="grip-vertical" class="w-4 h-4 text-[#86868B] opacity-40 group-hover:opacity-100 transition-opacity"></i>
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                </div>
+
+                <!-- Formulário Rápido de Adição -->
+                <div class="pt-3 border-t border-[#E5E5EA] flex items-center gap-2">
+                  <input type="text" id="quickAddSubInput" placeholder="Novo substituto..." class="flex-1 text-xs bg-[#F5F5F7] border border-[#E5E5EA] rounded-xl px-3 py-2 outline-none focus:border-[#0071E3] focus:bg-white transition-all placeholder:text-[#8E8E93]" />
+                  <button onclick="addQuickSubstituto()" class="px-3 py-2 bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium rounded-xl transition-all active:scale-[0.97]">
+                    Adicionar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        ${state.isReportModalOpen ? renderReportModal() : ''}
+
+        <!-- MODAL: ATRIBUIR / EDITAR PROFESSOR TITULAR NO BLOCO -->
+        ${state.assignTitularModalSlotId ? renderAssignTitularModal() : ''}
+
+        <!-- MODAL: CONFIRMAR DESVINCULAÇÃO DO PROFESSOR TITULAR -->
+        ${state.removeTitularConfirmSlotId ? renderRemoveTitularConfirmModal() : ''}
+
+        <!-- MODAL GUIA DE INSTALAÇÃO NO IOS SAFARI -->
+        ${pwaState.showIOSGuide ? renderIOSGuideModal() : ''}
+
+        <!-- MODAL GUIA DE INSTALAÇÃO GERAL (CHROME / DESKTOP) -->
+        ${pwaState.showGeneralGuide ? renderGeneralGuideModal() : ''}
+
+        <!-- PAINEL / MODAL: ESPELHO DE AULAS DO SUBSTITUTO -->
+        ${state.trackedSubstituteName ? renderSubstituteTrackerModal() : ''}
+
+        <!-- MODAL DE ALERTA DE CONFLITO DE HORÁRIO -->
+        ${state.conflictAlert ? renderConflictModal() : ''}
+
+        <!-- GAVETA INFERIOR (BOTTOM SHEET) PARA TOQUE TOUCH -->
+        ${state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : ''}
+
+        <!-- MODAL DE GERENCIAMENTO DE PROFESSORES -->
+        ${state.isManagementModalOpen ? renderTeacherManagementModal() : ''}
+
+        <!-- FEEDBACK TOAST ESTILO APPLE -->
+        ${state.toast ? `
+          <div role="status" aria-live="polite" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#1D1D1F]/90 ios-blur text-white text-xs font-medium py-2.5 px-4 rounded-2xl shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+            <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+            <span>${allocationEscape(state.toast)}</span>
+          </div>
+        ` : ''}
+      `;
+
+      lucide.createIcons();
+
+      if (state.isSearchDropdownOpen && state.globalSearchQuery.trim() !== '') {
+        updateSearchDropdown();
+      }
+    }
+
+    // ==========================================
+    // 10. CARD DA AULA (GESTÃO DIRETA DO TITULAR NO BLOCO)
+    // ==========================================
+    function renderClassSlotCard(slot) {
+      const hasTitular = slot.regularTeacher && slot.regularTeacher.trim() !== '';
+      const isRegular = slot.status === 'regular';
+      const isFalta = slot.status === 'falta';
+      const isSubstituido = slot.status === 'substituido';
+
+      // Estilo do container
+      let styleClass = 'bg-white border-[#E5E5EA] text-[#1D1D1F] hover:border-[#D2D2D7] shadow-xs';
+      if (!hasTitular && isRegular) {
+        styleClass = 'bg-white border-[#E5E5EA] hover:border-[#0071E3]/40 shadow-2xs';
+      } else if (isFalta) {
+        styleClass = 'bg-[#FFF5F5] border-[#FED7D7] text-[#9B1C1C] hover:bg-[#FFEBEB] shadow-xs';
+      } else if (isSubstituido) {
+        styleClass = 'bg-[#F0F7FF] border-[#BAE6FD] text-[#0369A1] shadow-xs';
+      }
+
+      return `
+        <div id="slot-${slot.id}"
+          ondragover="handleDragOver(event, '${slot.id}')"
+          ondragleave="handleDragLeave(event, '${slot.id}')"
+          ondrop="handleDrop(event, '${slot.id}')"
+          onclick="${!hasTitular && isRegular ? `openAssignTitularModal('${slot.id}')` : isFalta ? `openBottomSheet('${slot.id}')` : ''}"
+          class="p-4 sm:p-5 rounded-3xl border transition-all duration-200 relative select-none ${styleClass} ${(!hasTitular && isRegular) || isFalta ? 'cursor-pointer active:scale-[0.99]' : ''}">
+
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+
+            <div class="flex items-start sm:items-center gap-3.5">
+              <!-- Ícone indicador do estado -->
+              <div class="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 transition-colors ${
+                !hasTitular && isRegular ? 'bg-[#F5F5F7] text-[#86868B]' :
+                isFalta ? 'bg-red-100 text-red-600' :
+                isSubstituido ? 'bg-[#0071E3]/15 text-[#0071E3]' :
+                'bg-[#F5F5F7] text-[#1D1D1F]'
+              }">
+                <i data-lucide="${
+                  !hasTitular && isRegular ? 'user-plus' :
+                  isFalta ? 'alert-triangle' :
+                  isSubstituido ? 'user-check' :
+                  'clock'
+                }" class="w-5 h-5"></i>
+              </div>
+
+              <div>
+                <!-- Horário da Aula (Foco Estrito) -->
+                <div class="flex items-center gap-2 text-xs font-semibold tabular-nums text-[#86868B]">
+                  <span>${slot.timeRange}</span>
+                  <span class="text-[#D2D2D7]">·</span>
+                  <span class="font-medium text-[#6E6E73]">${slot.slotLabel}</span>
+                </div>
+
+                <!-- Nome do Professor ou Alerta (Foco Estrito - SEM matérias) -->
+                <div class="mt-1">
+                  <!-- Caso 1: Sem professor atribuído -->
+                  ${!hasTitular && isRegular ? `
+                    <div class="text-base font-semibold text-[#86868B] tracking-tight">
+                      Sem professor atribuído
+                    </div>
+                    <p class="text-xs text-[#86868B] mt-0.5">Toque para definir o professor titular deste horário</p>
+                  ` : ''}
+
+                  <!-- Caso 2: Regular com titular atribuído -->
+                  ${hasTitular && isRegular ? `
+                    <div class="text-base sm:text-lg font-semibold text-[#1D1D1F] tracking-tight">
+                      Prof. ${slot.regularTeacher}
+                    </div>
+                  ` : ''}
+
+                  <!-- Caso 3: Falta / Aberto -->
+                  ${isFalta ? `
+                    <div class="text-base sm:text-lg font-bold text-red-600 tracking-tight flex items-center gap-2">
+                      <span>AULA EM ABERTO / VAGO</span>
+                    </div>
+                    <p class="text-xs text-red-500/90 mt-0.5">Toque para alocar substituto ou arraste da lista lateral (Titular: Prof. ${slot.regularTeacher})</p>
+                  ` : ''}
+
+                  <!-- Caso 4: Substituído -->
+                  ${isSubstituido ? `
+                    <div class="text-base sm:text-lg font-bold text-[#0071E3] tracking-tight flex items-center gap-2">
+                      <span>Prof. ${slot.substituteTeacher}</span>
+                      <button onclick="event.stopPropagation(); openSubstituteTracker('${slot.substituteTeacher.replace(/'/g, "\\'")}')" title="Ver Espelho do Substituto" class="text-[11px] font-semibold text-blue-700 bg-blue-100 hover:bg-blue-200 px-2 py-0.5 rounded-full flex items-center gap-1 transition-colors">
+                        <span>Substituto</span>
+                        <i data-lucide="eye" class="w-3 h-3"></i>
+                      </button>
+                    </div>
+                    <p class="text-xs text-[#86868B] line-through mt-0.5">Titular ausente: Prof. ${slot.regularTeacher}</p>
+                  ` : ''}
+                </div>
+              </div>
+            </div>
+
+            <!-- Ações Rápidas Estilo Apple iOS -->
+            <div class="flex items-center gap-2 self-end sm:self-center shrink-0 pt-1 sm:pt-0" onclick="event.stopPropagation()">
+
+              <!-- Ação quando não há professor titular fixado -->
+              ${!hasTitular && isRegular ? `
+                <button onclick="openAssignTitularModal('${slot.id}')"
+                  class="px-3.5 py-2 text-xs font-semibold text-[#0071E3] bg-[#0071E3]/10 hover:bg-[#0071E3]/20 border border-[#0071E3]/25 rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target shadow-2xs">
+                  <i data-lucide="plus" class="w-4 h-4"></i>
+                  <span>Atribuir Titular</span>
+                </button>
+              ` : ''}
+
+              <!-- Ações quando há professor titular regular fixado -->
+              ${hasTitular && isRegular ? `
+                <!-- Botão Editar Titular -->
+                <button onclick="openAssignTitularModal('${slot.id}')"
+                  title="Editar ou trocar o professor titular deste horário"
+                  class="p-2 text-[#86868B] hover:text-[#0071E3] hover:bg-blue-50 border border-[#E5E5EA] rounded-xl transition-all active:scale-[0.97] touch-target flex items-center justify-center">
+                  <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                </button>
+
+                <!-- Botão Excluir Titular do Bloco (Volta a ser 'Sem professor atribuído') -->
+                <button onclick="confirmRemoveTitularFromSlot('${slot.id}')"
+                  title="Desvincular professor deste horário (deixar sem titular)"
+                  class="p-2 text-[#86868B] hover:text-red-600 hover:bg-red-50 border border-[#E5E5EA] rounded-xl transition-all active:scale-[0.97] touch-target flex items-center justify-center">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+
+                <!-- Botão Registrar Falta -->
+                <button onclick="registerFalta('${slot.id}')"
+                  class="px-3.5 py-2 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100/80 border border-red-200/80 rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
+                  <i data-lucide="user-x" class="w-4 h-4"></i>
+                  <span>Registrar Falta</span>
+                </button>
+              ` : ''}
+
+              <!-- Ações quando está em Falta / Aberto -->
+              ${isFalta ? `
+                <button onclick="openBottomSheet('${slot.id}')"
+                  class="px-3.5 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
+                  <i data-lucide="user-plus" class="w-4 h-4"></i>
+                  <span>Alocar Substituto</span>
+                </button>
+
+                <button onclick="undoFalta('${slot.id}')"
+                  title="Restaurar Titular"
+                  class="p-2.5 text-xs font-medium text-[#86868B] hover:text-[#1D1D1F] bg-white border border-[#E5E5EA] hover:bg-[#F5F5F7] rounded-xl transition-all active:scale-[0.97] flex items-center justify-center touch-target">
+                  <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                </button>
+              ` : ''}
+
+              <!-- Ações quando está Substituído -->
+              ${isSubstituido ? `
+                <button onclick="removeSubstitute('${slot.id}')"
+                  class="px-3 py-2 text-xs font-medium text-[#86868B] hover:text-red-600 bg-white border border-[#E5E5EA] hover:bg-red-50 rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                  <span class="hidden sm:inline">Remover Substituto</span>
+                </button>
+
+                <button onclick="undoFalta('${slot.id}')"
+                  title="Restaurar Titular Original"
+                  class="px-3.5 py-2 text-xs font-medium text-[#1D1D1F] bg-white border border-[#E5E5EA] hover:bg-[#F5F5F7] rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
+                  <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-[#0071E3]"></i>
+                  <span>Desfazer Falta</span>
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // 11. MODAL: ATRIBUIR / EDITAR PROFESSOR TITULAR NO BLOCO
+    // ==========================================
+    function renderAssignTitularModal() {
+      const slot = state.slots[state.assignTitularModalSlotId];
+      if (!slot) return '';
+
+      const currentTeacher = slot.regularTeacher || '';
+      const titularesList = state.teachers.titulares;
+
+      return `
+        <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/45 ios-blur animate-in fade-in duration-200" onclick="state.assignTitularModalSlotId = null; renderApp();">
+          <div class="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 sm:p-7 space-y-4 max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-200" onclick="event.stopPropagation()">
+
+            <!-- Apple Grab Handle no mobile -->
+            <div class="w-10 h-1.5 bg-[#D2D2D7] rounded-full mx-auto sm:hidden mb-2"></div>
+
+            <div class="flex items-start justify-between border-b border-[#E5E5EA] pb-3.5">
+              <div>
+                <h3 class="text-base font-bold text-[#1D1D1F] tracking-tight">
+                  ${currentTeacher ? 'Editar Professor Titular' : 'Atribuir Professor Titular'}
+                </h3>
+                <div class="text-xs text-[#86868B] mt-0.5">
+                  <span class="font-medium text-[#1D1D1F]">${formatClassName(slot.className)}</span> · ${slot.day} · ${slot.timeRange} (${slot.slotLabel})
+                </div>
+              </div>
+              <button onclick="state.assignTitularModalSlotId = null; renderApp();" class="w-8 h-8 rounded-full bg-[#F5F5F7] hover:bg-[#E5E5EA] flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F]">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <!-- Formulário para digitar ou renomear -->
+            <form onsubmit="event.preventDefault(); const val = document.getElementById('assignTitularInput').value; saveTitularToSlot('${slot.id}', val);" class="space-y-2">
+              <label class="text-xs font-semibold text-[#1D1D1F] block">
+                Nome do Professor Titular:
+              </label>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  id="assignTitularInput"
+                  value="${currentTeacher}"
+                  placeholder="Nome completo do professor..."
+                  class="flex-1 text-sm bg-[#F5F5F7] border border-[#E5E5EA] focus:border-[#0071E3] focus:bg-white rounded-xl px-3.5 py-2.5 outline-none transition-all placeholder:text-[#8E8E93]"
+                  autoFocus
+                />
+                <button type="submit" class="px-4 py-2.5 bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-semibold rounded-xl transition-all active:scale-[0.98]">
+                  Salvar
+                </button>
+              </div>
+            </form>
+
+            <!-- Lista Rápida com 1 Toque dos Titulares Cadastrados -->
+            <div class="pt-2 border-t border-[#E5E5EA] space-y-2">
+              <div class="text-[11px] font-semibold text-[#86868B] uppercase tracking-wider">
+                Ou selecione um professor já cadastrado:
+              </div>
+
+              <div class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                ${titularesList.map(name => `
+                  <button onclick="saveTitularToSlot('${slot.id}', '${name.replace(/'/g, "\\'")}')"
+                    class="w-full p-2.5 bg-[#F5F5F7] hover:bg-blue-50 border border-transparent hover:border-blue-200 rounded-xl flex items-center justify-between transition-all active:scale-[0.98] text-left touch-target">
+                    <div class="flex items-center gap-2.5">
+                      <div class="w-7 h-7 rounded-lg bg-white border border-[#E5E5EA] flex items-center justify-center text-xs font-bold text-[#0071E3]">
+                        ${name.split(' ').map(n=>n[0]).slice(0,2).join('')}
+                      </div>
+                      <span class="text-xs font-medium text-[#1D1D1F]">${name}</span>
+                    </div>
+                    ${name === currentTeacher ? `
+                      <span class="text-[11px] font-semibold text-[#0071E3] bg-blue-100 px-2 py-0.5 rounded-full">Atual</span>
+                    ` : `
+                      <span class="text-xs text-[#0071E3] font-semibold flex items-center gap-1">
+                        <span>Escolher</span>
+                        <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                      </span>
+                    `}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+
+            <!-- Botão de Desvincular se houver professor -->
+            ${currentTeacher ? `
+              <div class="pt-2 border-t border-[#E5E5EA] flex justify-between items-center">
+                <button onclick="state.assignTitularModalSlotId = null; confirmRemoveTitularFromSlot('${slot.id}');"
+                  class="text-xs text-red-600 hover:text-red-700 font-medium flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-red-50 transition-colors">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                  <span>Desvincular professor deste horário</span>
+                </button>
+                <button onclick="state.assignTitularModalSlotId = null; renderApp();" class="px-4 py-2 bg-[#F5F5F7] text-xs font-medium text-[#1D1D1F] rounded-xl hover:bg-[#E5E5EA]">
+                  Cancelar
+                </button>
+              </div>
+            ` : `
+              <div class="pt-1 border-t border-[#E5E5EA] flex justify-end">
+                <button onclick="state.assignTitularModalSlotId = null; renderApp();" class="px-4 py-2 bg-[#F5F5F7] text-xs font-medium text-[#1D1D1F] rounded-xl hover:bg-[#E5E5EA]">
+                  Cancelar
+                </button>
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // 12. MODAL: CONFIRMAR DESVINCULAÇÃO DO TITULAR DO BLOCO
+    // ==========================================
+    function renderRemoveTitularConfirmModal() {
+      const slot = state.slots[state.removeTitularConfirmSlotId];
+      if (!slot) return '';
+
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 ios-blur animate-in fade-in duration-150">
+          <div class="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-xs">
+              <i data-lucide="user-minus" class="w-6 h-6"></i>
+            </div>
+
+            <div class="text-center space-y-1">
+              <h3 class="text-base font-bold text-[#1D1D1F]">Desvincular Professor?</h3>
+              <p class="text-xs text-[#86868B]">
+                Deseja remover o <strong>Prof. ${slot.regularTeacher}</strong> deste horário (${formatClassName(slot.className)} · ${slot.timeRange})?
+              </p>
+              <p class="text-[11px] text-[#86868B] pt-1">
+                O horário voltará a ficar como <strong>"Sem professor atribuído"</strong>, sem gerar registro de falta.
+              </p>
+            </div>
+
+            <div class="flex items-center gap-2 pt-2">
+              <button onclick="state.removeTitularConfirmSlotId = null; renderApp();" class="flex-1 py-2.5 px-3 text-xs font-semibold text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E5E5EA] rounded-xl transition-all touch-target">
+                Cancelar
+              </button>
+              <button onclick="executeRemoveTitularFromSlot('${slot.id}')" class="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all shadow-xs touch-target">
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // 13. ESPELHO DE AULAS DO SUBSTITUTO
+    // ==========================================
+    function openSubstituteTracker(subName) {
+      state.trackedSubstituteName = subName;
+      state.isSearchDropdownOpen = false;
+      renderApp();
+    }
+
+    function renderSubstituteTrackerModal() {
+      const subName = state.trackedSubstituteName;
+      const subObj = state.teachers.substitutos.find(s => getSubName(s) === subName) || { name: subName };
+
+      const allAllocations = Object.values(state.slots).filter(s =>
+        s.status === 'substituido' &&
+        s.substituteTeacher &&
+        s.substituteTeacher.trim().toLowerCase() === subName.trim().toLowerCase()
+      );
+
+      const dayOrder = { 'Segunda-feira': 1, 'Terça-feira': 2, 'Quarta-feira': 3, 'Quinta-feira': 4, 'Sexta-feira': 5 };
+      allAllocations.sort((a, b) => {
+        if (dayOrder[a.day] !== dayOrder[b.day]) return dayOrder[a.day] - dayOrder[b.day];
+        return a.timeRange.localeCompare(b.timeRange);
+      });
+
+      const todayAllocations = allAllocations.filter(s => s.day === state.selectedDay);
+      const uniqueClasses = [...new Set(allAllocations.map(s => s.className))];
+      const initials = subName.split(' ').map(n=>n[0]).slice(0,2).join('');
+      const phone = getSubPhone(subObj);
+
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 ios-blur animate-in fade-in duration-200" onclick="state.trackedSubstituteName = null; renderApp();">
+          <div class="w-full max-w-2xl bg-white rounded-3xl shadow-2xl p-6 sm:p-7 space-y-5 max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200" onclick="event.stopPropagation()">
+
+            <div class="flex items-start justify-between border-b border-[#E5E5EA] pb-4">
+              <div class="flex items-center gap-3.5">
+                <div class="w-12 h-12 rounded-2xl bg-[#0071E3] text-white flex items-center justify-center font-bold text-lg shadow-sm">
+                  ${initials}
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-lg font-bold text-[#1D1D1F] tracking-tight">Prof. ${subName}</h3>
+                    <span class="text-[11px] font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Substituto</span>
+                  </div>
+                  <p class="text-xs text-[#86868B] mt-0.5">
+                    ${phone ? `<span class="flex items-center gap-1"><i data-lucide="phone" class="w-3 h-3"></i> ${phone}</span>` : 'Espelho Completo de Aulas e Alocações'}
+                  </p>
+                </div>
+              </div>
+
+              <button onclick="state.trackedSubstituteName = null; renderApp();" class="w-8 h-8 rounded-full bg-[#F5F5F7] hover:bg-[#E5E5EA] text-[#86868B] hover:text-[#1D1D1F] flex items-center justify-center transition-colors">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3">
+              <div class="bg-[#F5F5F7] p-3.5 rounded-2xl text-center">
+                <div class="text-xs font-medium text-[#86868B]">Aulas Hoje (${WEEK_SHORT[state.selectedDay]})</div>
+                <div class="text-xl font-bold text-[#1D1D1F] mt-1 tabular-nums">${todayAllocations.length}</div>
+              </div>
+              <div class="bg-[#F5F5F7] p-3.5 rounded-2xl text-center">
+                <div class="text-xs font-medium text-[#86868B]">Total na Semana</div>
+                <div class="text-xl font-bold text-[#0071E3] mt-1 tabular-nums">${allAllocations.length}</div>
+              </div>
+              <div class="bg-[#F5F5F7] p-3.5 rounded-2xl text-center">
+                <div class="text-xs font-medium text-[#86868B]">Turmas Atendidas</div>
+                <div class="text-xl font-bold text-[#1D1D1F] mt-1 tabular-nums">${uniqueClasses.length}</div>
+              </div>
+            </div>
+
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <h4 class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">
+                  Escala de Aulas Alocadas (${allAllocations.length})
+                </h4>
+                ${todayAllocations.length > 0 ? `
+                  <span class="text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                    Ativo hoje na escola
+                  </span>
+                ` : ''}
+              </div>
+
+              ${allAllocations.length === 0 ? `
+                <div class="p-8 text-center bg-[#F5F5F7] rounded-2xl text-xs text-[#86868B] space-y-1">
+                  <i data-lucide="calendar-x" class="w-8 h-8 text-[#86868B] mx-auto opacity-50 mb-1"></i>
+                  <div class="font-medium text-[#1D1D1F]">Nenhuma aula alocada no momento</div>
+                  <div>Este professor substituto está totalmente livre para novas substituições.</div>
+                </div>
+              ` : `
+                <div class="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+                  ${allAllocations.map(item => {
+                    const isToday = item.day === state.selectedDay;
+                    return `
+                      <div class="p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        isToday ? 'bg-blue-50/70 border-blue-200 shadow-2xs' : 'bg-[#F5F5F7] border-transparent'
+                      }">
+                        <div>
+                          <div class="flex items-center gap-2 text-xs font-semibold text-[#1D1D1F]">
+                            <span class="px-2 py-0.5 rounded-md ${isToday ? 'bg-[#0071E3] text-white' : 'bg-[#E5E5EA] text-[#1D1D1F]'}">
+                              ${item.day}
+                            </span>
+                            <span>·</span>
+                            <span class="text-[#0071E3]">${formatClassName(item.className)}</span>
+                            <span>·</span>
+                            <span class="text-[#86868B] font-mono tabular-nums">${item.timeRange}</span>
+                          </div>
+
+                          <div class="text-xs text-[#86868B] mt-1 flex items-center gap-2">
+                            <span>Turno da ${item.shift} (${item.slotLabel})</span>
+                            <span>·</span>
+                            <span class="line-through">Titular: Prof. ${item.regularTeacher || 'Não cadastrado'}</span>
+                          </div>
+                        </div>
+
+                        <button onclick="navigateToSlot('${item.day}', '${item.shift}', '${item.className}', '${item.id}')"
+                          class="px-3.5 py-2 text-xs font-semibold text-white bg-[#0071E3] hover:bg-[#0077ED] rounded-xl shadow-xs transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 touch-target shrink-0">
+                          <span>Ir para a aula</span>
+                          <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                        </button>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              `}
+            </div>
+
+            <div class="pt-3 border-t border-[#E5E5EA] flex justify-end">
+              <button onclick="state.trackedSubstituteName = null; renderApp();" class="px-5 py-2.5 bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium rounded-xl transition-all active:scale-[0.98]">
+                Fechar Espelho
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // 14. ALERTA DE CONFLITO DE HORÁRIO
+    // ==========================================
+    function renderConflictModal() {
+      const alert = state.conflictAlert;
+      if (!alert) return '';
+
+      const target = state.slots[alert.slotId];
+      const conflict = alert.conflictSlot;
+
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 ios-blur animate-in fade-in duration-150">
+          <div class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div class="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto shadow-xs">
+              <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+            </div>
+
+            <div class="text-center space-y-1">
+              <h3 class="text-base font-bold text-[#1D1D1F]">Conflito de Horário Detectado!</h3>
+              <p class="text-xs text-[#86868B]">O professor substituto selecionado já está lecionando em outra sala neste mesmo horário.</p>
+            </div>
+
+            <div class="p-4 bg-red-50 border border-red-200 rounded-2xl space-y-2 text-xs text-red-950">
+              <div class="font-bold text-red-700 flex items-center gap-1.5">
+                <i data-lucide="clock" class="w-4 h-4"></i>
+                <span>${conflict.day} · ${conflict.timeRange} (${conflict.slotLabel})</span>
+              </div>
+              <div>
+                <strong>Professor:</strong> ${alert.subName}
+              </div>
+              <div>
+                <strong>Já alocado em:</strong> ${formatClassName(conflict.className)} (Turno da ${conflict.shift})
+              </div>
+              <div>
+                <strong>Tentativa atual:</strong> ${target ? formatClassName(target.className) : ''}
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 pt-2">
+              <button onclick="state.conflictAlert = null; renderApp();" class="flex-1 py-2.5 px-3 text-xs font-semibold text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E5E5EA] rounded-xl transition-all touch-target">
+                Cancelar Alocação
+              </button>
+              <button onclick="attemptAssignSubstitute('${alert.slotId}', '${alert.subName.replace(/'/g, "\\'")}', true)" class="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all shadow-xs touch-target">
+                Forçar Sobreposição
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // 15. BOTTOM SHEET TOUCH MOBILE
+    // ==========================================
+    let allocationReturnFocus = null;
+    function allocationEscape(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
+    }
+
+    function allocationSlots() {
+      return Object.values(state.slots).filter(slot => slot.status === 'falta');
+    }
+
+    function openBottomSheet(slotId) {
+      allocationReturnFocus = document.activeElement?.id;
+      const slots = allocationSlots();
+      const first = slots.find(slot => slot.day === state.selectedDay && slot.className === state.selectedClass && slot.shift === state.selectedShift) || slots.find(slot => slot.day === state.selectedDay) || slots[0];
+      state.activeBottomSheetSlotId = slotId || first?.id || 'empty';
+      renderApp();
+      document.getElementById('allocationLesson')?.focus({ preventScroll: true });
+    }
+
+    function closeAllocation() {
+      state.activeBottomSheetSlotId = null;
+      renderApp();
+      (document.getElementById(allocationReturnFocus) || document.querySelector('[data-allocation-trigger]'))?.focus({ preventScroll: true });
+    }
+
+    function filterAllocationTeachers(query) {
+      const normalize = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      let count = 0;
+      document.querySelectorAll('[data-allocation-name]').forEach(item => {
+        item.hidden = !normalize(item.dataset.allocationName).includes(normalize(query));
+        if (!item.hidden) count++;
+      });
+      document.getElementById('allocationNoResults').hidden = count > 0;
+    }
+
+    function selectAllocationTeacher(index) {
+      document.getElementById('sheetNewSubInput').value = getSubName(state.teachers.substitutos[index]);
+      document.getElementById('allocationConfirm').focus();
+    }
+
+    function renderBottomSheet() {
+      const slot = state.slots[state.activeBottomSheetSlotId];
+      const slots = allocationSlots();
+      const esc = allocationEscape;
+      return `
+        <div class="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-5 bg-black/40 ios-blur" onclick="closeAllocation()">
+          <section id="allocationDialog" role="dialog" aria-modal="true" aria-labelledby="allocationTitle" class="w-full md:max-w-4xl bg-white rounded-t-3xl md:rounded-3xl shadow-2xl max-h-[92dvh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+            <header class="flex items-start justify-between gap-3 p-5 border-b border-[#E5E5EA] shrink-0">
+              <div><h3 id="allocationTitle" class="text-base font-semibold">Alocar Professor Substituto</h3><p class="text-xs text-[#6E6E73] mt-1">Selecione a aula e confirme a substituição.</p></div>
+              <button type="button" aria-label="Fechar alocação" onclick="closeAllocation()" class="touch-target rounded-full bg-[#F5F5F7] flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </header>
+            <div class="grid md:grid-cols-2 min-h-0 overflow-y-auto">
+              <form onsubmit="event.preventDefault(); addAndAssignFromSheet(state.activeBottomSheetSlotId)" class="p-5 space-y-4 md:border-r border-[#E5E5EA]">
+                <div class="space-y-2">
+                  <label for="allocationLesson" class="block text-sm font-semibold">1. Professor ausente / aula</label>
+                  <select id="allocationLesson" ${slots.length ? '' : 'disabled'} onchange="state.activeBottomSheetSlotId = this.value; renderApp(); document.getElementById('sheetNewSubInput')?.focus({preventScroll:true})" class="touch-target w-full min-w-0 border border-[#D2D2D7] rounded-xl px-3 text-sm bg-white focus:ring-2 focus:ring-blue-200">
+                    ${slots.length ? slots.map(item => `<option value="${esc(item.id)}" ${slot?.id === item.id ? 'selected' : ''}>${esc(item.regularTeacher || 'Sem titular')} · ${esc(item.day)} · ${esc(formatClassName(item.className))} · ${esc(item.timeRange)}</option>`).join('') : '<option>Nenhuma aula vaga</option>'}
+                  </select>
+                </div>
+                ${slot ? `<dl class="grid grid-cols-2 gap-3 bg-[#F5F5F7] rounded-2xl p-4 text-xs"><div><dt class="text-[#6E6E73]">Dia / turno</dt><dd class="font-semibold mt-1">${esc(slot.day)} · ${esc(slot.shift)}</dd></div><div><dt class="text-[#6E6E73]">Turma / horário</dt><dd class="font-semibold mt-1">${esc(formatClassName(slot.className))} · ${esc(slot.timeRange)}</dd></div><div class="col-span-2"><dt class="text-[#6E6E73]">Professor ausente</dt><dd class="font-semibold mt-1">${esc(slot.regularTeacher || 'Sem titular cadastrado')}</dd></div></dl>` : '<p class="text-sm text-[#6E6E73]">Registre uma falta na grade para disponibilizar a aula aqui.</p>'}
+                <div class="space-y-2"><label for="sheetNewSubInput" class="block text-sm font-semibold">2. Professor substituto</label>
+                  <input required ${slot ? '' : 'disabled'} type="text" id="sheetNewSubInput" list="allocationTeacherOptions" placeholder="Busque ou digite o nome completo" class="touch-target w-full min-w-0 text-sm border border-[#D2D2D7] rounded-xl px-3 focus:ring-2 focus:ring-blue-200" />
+                  <datalist id="allocationTeacherOptions">${state.teachers.substitutos.map(sub => `<option value="${esc(getSubName(sub))}"></option>`).join('')}</datalist>
+                  <p class="text-xs text-[#6E6E73]">Escolha um cadastro ou informe um novo nome. Confira a disponibilidade ao lado.</p>
+                </div>
+                <button id="allocationConfirm" ${slot ? '' : 'disabled'} class="touch-target w-full rounded-xl bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-50 text-white text-sm font-semibold px-4 py-3">Confirmar alocação</button>
+              </form>
+              <aside class="p-5 bg-[#F5F5F7]/50 min-w-0 flex flex-col gap-3">
+                <label for="allocationSearch" class="text-sm font-semibold">Substitutos e disponibilidade</label>
+                <input id="allocationSearch" type="search" oninput="filterAllocationTeachers(this.value)" placeholder="Filtrar por nome…" class="touch-target w-full border border-[#D2D2D7] rounded-xl px-3 text-sm focus:ring-2 focus:ring-blue-200" />
+                <div class="space-y-2 max-h-60 md:max-h-[min(360px,45dvh)] overflow-y-auto">
+                  ${state.teachers.substitutos.map((sub, index) => {
+                    const name = getSubName(sub);
+                    const conflict = slot && checkScheduleConflict(name, slot.id);
+                    return `<div data-allocation-name="${esc(name)}"><button type="button" ${slot ? '' : 'disabled'} onclick="selectAllocationTeacher(${index})" class="touch-target w-full text-left p-3 rounded-xl border ${conflict ? 'border-amber-200 bg-amber-50' : 'border-[#E5E5EA] bg-white hover:border-blue-300'}"><span class="block text-sm font-semibold">${esc(name)}</span><span class="block text-xs mt-1 ${conflict ? 'text-amber-800' : 'text-[#6E6E73]'}">${!slot ? 'Selecione uma aula para consultar' : conflict ? 'Ocupado em ' + esc(formatClassName(conflict.className)) : 'Disponível neste horário'} · Selecionar</span></button></div>`;
+                  }).join('')}
+                  <p id="allocationNoResults" ${state.teachers.substitutos.length ? 'hidden' : ''} class="text-sm text-[#6E6E73] p-3">Nenhum substituto encontrado. Informe um novo nome no formulário.</p>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </div>`;
+    }
+
+    document.addEventListener('keydown', event => {
+      if (!state.activeBottomSheetSlotId || state.conflictAlert) return;
+      if (event.key === 'Escape') { event.preventDefault(); closeAllocation(); }
+      if (event.key === 'Tab') {
+        const elements = [...document.querySelectorAll('#allocationDialog button:not(:disabled), #allocationDialog input:not(:disabled), #allocationDialog select:not(:disabled)')].filter(el => !el.closest('[hidden]'));
+        const first = elements[0], last = elements[elements.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    });
+
+    function addAndAssignFromSheet(slotId) {
+      const input = document.getElementById('sheetNewSubInput');
+      const name = input ? input.value.trim() : '';
+      if (!name || !state.slots[slotId] || state.slots[slotId].status !== 'falta') return;
+      if (!state.teachers.substitutos.some(s => getSubName(s).toLowerCase() === name.toLowerCase())) {
+        state.teachers.substitutos.push({ name, phone: '' });
+      }
+      attemptAssignSubstitute(slotId, name);
+    }
+
+    function addQuickSubstituto() {
+      const input = document.getElementById('quickAddSubInput');
+      const name = input ? input.value.trim() : '';
+      if (!name) return;
+      if (!state.teachers.substitutos.some(s => getSubName(s).toLowerCase() === name.toLowerCase())) {
+        state.teachers.substitutos.push({ name, phone: '' });
+        saveState();
+        renderApp();
+        showToast(`Professor substituto ${name} adicionado.`);
+      } else {
+        showToast('Professor já cadastrado.');
+      }
+    }
+
+    function handleDragStart(event, name) {
+      event.dataTransfer.setData('text/plain', name);
+      event.dataTransfer.effectAllowed = 'copy';
+    }
+
+    function handleDragOver(event, slotId) {
+      event.preventDefault();
+      const el = document.getElementById(`slot-${slotId}`);
+      if (el) el.classList.add('ring-2', 'ring-[#0071E3]', 'bg-blue-50/90');
+    }
+
+    function handleDragLeave(event, slotId) {
+      const el = document.getElementById(`slot-${slotId}`);
+      if (el) el.classList.remove('ring-2', 'ring-[#0071E3]', 'bg-blue-50/90');
+    }
+
+    function handleDrop(event, slotId) {
+      event.preventDefault();
+      handleDragLeave(event, slotId);
+      const name = event.dataTransfer.getData('text/plain');
+      if (name && state.slots[slotId]) {
+        // Se a aula estiver em falta, aloca o substituto
+        if (state.slots[slotId].status === 'falta' || state.slots[slotId].status === 'substituido') {
+          attemptAssignSubstitute(slotId, name);
+        } else {
+          showToast('Para alocar substituto, registre a falta primeiro ou defina a aula como vaga.');
+        }
+      }
+    }
+
+    // ==========================================
+    // 16. MODAL DE GERENCIAMENTO DE PROFESSORES
+    // ==========================================
+    let managementActiveTab = 'titulares';
+    let managementFeedback = '';
+
+    function openTeacherManagement(tab = managementActiveTab) {
+      managementActiveTab = tab;
+      managementFeedback = '';
+      state.isManagementModalOpen = true;
+      renderApp();
+      document.getElementById('modalNewTeacherName')?.focus({ preventScroll: true });
+    }
+
+    function renderTeacherManagementModal() {
+      const titulares = state.teachers.titulares;
+      const substitutos = state.teachers.substitutos;
+
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 ios-blur" onclick="state.isManagementModalOpen = false; renderApp();">
+          <div role="dialog" aria-modal="true" aria-labelledby="managementTitle" class="w-full max-w-2xl md:max-w-4xl bg-white rounded-3xl shadow-2xl p-5 sm:p-7 space-y-5 max-h-[90dvh] overflow-y-auto" onclick="event.stopPropagation()">
+
+            <div class="flex items-center justify-between border-b border-[#E5E5EA] pb-3.5">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-[#0071E3]/10 flex items-center justify-center text-[#0071E3]">
+                  <i data-lucide="users" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h3 id="managementTitle" class="text-base font-semibold text-[#1D1D1F] tracking-tight">Quadro de Professores</h3>
+                  <p class="text-xs text-[#86868B]">Gerenciamento de titulares e banco de substitutos</p>
+                </div>
+              </div>
+              <button onclick="state.isManagementModalOpen = false; renderApp();" class="w-8 h-8 rounded-full bg-[#F5F5F7] flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F]">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <div class="bg-[#E5E5EA]/75 p-1 rounded-2xl flex items-center gap-1">
+              <button onclick="openTeacherManagement('titulares');" class="flex-1 py-2 px-3 text-xs sm:text-sm font-medium rounded-xl transition-all ${
+                managementActiveTab === 'titulares' ? 'bg-white text-[#1D1D1F] shadow-xs font-semibold' : 'text-[#8E8E93] hover:text-[#1D1D1F]'
+              }">
+                Professores Titulares (${titulares.length})
+              </button>
+              <button onclick="openTeacherManagement('substitutos');" class="flex-1 py-2 px-3 text-xs sm:text-sm font-medium rounded-xl transition-all ${
+                managementActiveTab === 'substitutos' ? 'bg-white text-[#1D1D1F] shadow-xs font-semibold' : 'text-[#8E8E93] hover:text-[#1D1D1F]'
+              }">
+                Professores Substitutos (${substitutos.length})
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-5 items-start">
+              <form onsubmit="event.preventDefault(); addTeacherFromModal('${managementActiveTab}');" class="min-w-0 p-4 bg-[#F5F5F7] rounded-2xl border border-[#E5E5EA] space-y-4">
+                <h4 class="text-sm font-semibold text-[#1D1D1F]">Cadastrar ${managementActiveTab === 'titulares' ? 'professor titular' : 'substituto'}</h4>
+                <div class="space-y-1.5">
+                  <label for="modalNewTeacherName" class="block text-xs font-medium">Nome completo <span class="text-[#86868B]">(obrigatório)</span></label>
+                  <input type="text" id="modalNewTeacherName" name="teacherName" required autocomplete="name" placeholder="Nome completo..." class="w-full min-w-0 text-sm bg-white border border-[#D2D2D7] rounded-xl px-3 py-3 outline-none focus:border-[#0071E3] focus:ring-2 focus:ring-blue-100" />
+                </div>
+                ${managementActiveTab === 'substitutos' ? `
+                  <div class="space-y-1.5">
+                    <label for="modalNewTeacherPhone" class="block text-xs font-medium">Telefone <span class="text-[#86868B]">(opcional)</span></label>
+                    <input type="tel" id="modalNewTeacherPhone" name="teacherPhone" autocomplete="tel" placeholder="DDD e telefone" class="w-full min-w-0 text-sm bg-white border border-[#D2D2D7] rounded-xl px-3 py-3 outline-none focus:border-[#0071E3] focus:ring-2 focus:ring-blue-100" />
+                  </div>
+                ` : ''}
+                <button type="submit" class="w-full min-h-[44px] px-4 py-3 bg-[#0071E3] hover:bg-[#0077ED] text-white text-sm font-medium rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0071E3]">Cadastrar</button>
+                <p id="managementFeedback" role="status" aria-live="polite" class="text-xs leading-relaxed ${persistenceError ? 'text-red-700' : 'text-emerald-700'}">${managementFeedback ? (persistenceError ? 'Cadastro incluído na lista, mas não foi possível salvar. Verifique sua conexão.' : managementFeedback) : ''}</p>
+              </form>
+              <section class="min-w-0 space-y-3" aria-label="Registros cadastrados">
+                <h4 class="text-xs font-semibold text-[#86868B] uppercase tracking-wide">${managementActiveTab === 'titulares' ? 'Titulares cadastrados' : 'Substitutos cadastrados'}</h4>
+                ${(managementActiveTab === 'titulares' ? titulares : substitutos).length === 0 ? '<p class="p-4 text-sm text-[#86868B] bg-[#F5F5F7] rounded-2xl">Nenhum cadastro ainda. Preencha o formulário para começar.</p>' : ''}
+            <div class="space-y-2 max-h-[280px] md:max-h-[min(420px,45dvh)] overflow-y-auto pr-1">
+              ${(managementActiveTab === 'titulares' ? titulares : substitutos).map((t, idx) => {
+                const name = typeof t === 'string' ? t : (t.name || '');
+                const phone = typeof t === 'object' ? t.phone : null;
+                return `
+                  <div class="p-3 bg-[#F5F5F7] hover:bg-[#EBF3FF] rounded-2xl flex items-center justify-between text-xs">
+                    <div class="flex items-center gap-3 min-w-0">
+                      <div class="w-8 h-8 rounded-full bg-white border border-[#E5E5EA] flex items-center justify-center font-bold text-[#0071E3]">
+                        ${name.split(' ').map(n=>n[0]).slice(0,2).join('')}
+                      </div>
+                      <div>
+                        <div class="font-medium text-[#1D1D1F] break-words">${name}</div>
+                        ${phone ? `<div class="text-[10px] text-[#86868B]">${phone}</div>` : ''}
+                      </div>
+                    </div>
+                    <button onclick="removeTeacherFromModal(${idx}, '${managementActiveTab}')" class="p-2 text-[#86868B] hover:text-red-600 rounded-xl">
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+
+              </section>
+            </div>
+
+            <div class="pt-2 border-t border-[#E5E5EA] flex justify-end">
+              <button onclick="state.isManagementModalOpen = false; renderApp();" class="px-5 py-2.5 bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium rounded-xl">
+                Concluir
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function removeTeacherFromModal(idx, tab) {
+      if (tab === 'titulares') {
+        state.teachers.titulares.splice(idx, 1);
+      } else {
+        state.teachers.substitutos.splice(idx, 1);
+      }
+      saveState();
+      renderApp();
+    }
+
+    function addTeacherFromModal(tab) {
+      const nameInput = document.getElementById('modalNewTeacherName');
+      const name = nameInput ? nameInput.value.trim() : '';
+      if (!name) {
+        nameInput?.focus();
+        return;
+      }
+
+      if (tab === 'titulares') {
+        state.teachers.titulares.push(name);
+      } else {
+        const phoneInput = document.getElementById('modalNewTeacherPhone');
+        const phone = phoneInput ? phoneInput.value.trim() : '';
+        state.teachers.substitutos.push({ name, phone });
+      }
+      managementFeedback = 'Cadastro incluído. Salvando…';
+      const saving = saveState();
+      renderApp();
+      document.getElementById('modalNewTeacherName')?.focus({ preventScroll: true });
+      saving?.then(() => {
+        managementFeedback = persistenceError ? 'Não foi possível salvar. Verifique sua conexão.' : 'Cadastro salvo com sucesso.';
+        if (state.isManagementModalOpen && managementActiveTab === tab) {
+          renderApp();
+          document.getElementById('modalNewTeacherName')?.focus({ preventScroll: true });
+        }
+      });
+    }
+
+    // ==========================================
+    // 17. MODAL GUIAS DE INSTALAÇÃO PWA
+    // ==========================================
+    function renderIOSGuideModal() {
+      return `
+        <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50 ios-blur animate-in fade-in duration-200" onclick="pwaState.showIOSGuide = false; renderApp();">
+          <div class="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 space-y-4 animate-in slide-in-from-bottom sm:zoom-in-95 duration-250" onclick="event.stopPropagation()">
+            <div class="w-12 h-12 rounded-2xl bg-[#0071E3] text-white flex items-center justify-center mx-auto shadow-sm">
+              <i data-lucide="smartphone" class="w-6 h-6"></i>
+            </div>
+
+            <div class="text-center space-y-1">
+              <h3 class="text-base font-bold text-[#1D1D1F]">Instalar EduScale no iPhone / iPad</h3>
+              <p class="text-xs text-[#86868B]">Siga o passo a passo do Safari para fixar o app na tela inicial:</p>
+            </div>
+
+            <div class="space-y-3 bg-[#F5F5F7] p-4 rounded-2xl text-xs text-[#1D1D1F]">
+              <div class="flex items-start gap-3">
+                <div class="w-6 h-6 rounded-full bg-white flex items-center justify-center font-bold text-[#0071E3] shrink-0 shadow-2xs">1</div>
+                <div>Toque no botão <strong>Compartilhar</strong> (<i data-lucide="share" class="inline w-3.5 h-3.5 text-[#0071E3]"></i>) na barra inferior do Safari.</div>
+              </div>
+              <div class="flex items-start gap-3">
+                <div class="w-6 h-6 rounded-full bg-white flex items-center justify-center font-bold text-[#0071E3] shrink-0 shadow-2xs">2</div>
+                <div>Role as opções e toque em <strong>"Adicionar à Tela de Início"</strong> (<i data-lucide="plus-square" class="inline w-3.5 h-3.5 text-[#0071E3]"></i>).</div>
+              </div>
+              <div class="flex items-start gap-3">
+                <div class="w-6 h-6 rounded-full bg-white flex items-center justify-center font-bold text-[#0071E3] shrink-0 shadow-2xs">3</div>
+                <div>Toque em <strong>Adicionar</strong> no canto superior direito para concluir.</div>
+              </div>
+            </div>
+
+            <button onclick="pwaState.showIOSGuide = false; renderApp();" class="w-full py-2.5 bg-[#1D1D1F] hover:bg-black text-white text-xs font-semibold rounded-xl transition-all">
+              Entendido
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderGeneralGuideModal() {
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 ios-blur animate-in fade-in duration-200" onclick="pwaState.showGeneralGuide = false; renderApp();">
+          <div class="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200" onclick="event.stopPropagation()">
+            <div class="w-12 h-12 rounded-2xl bg-[#0071E3] text-white flex items-center justify-center mx-auto shadow-sm">
+              <i data-lucide="download" class="w-6 h-6"></i>
+            </div>
+
+            <div class="text-center space-y-1">
+              <h3 class="text-base font-bold text-[#1D1D1F]">Instalar EduScale</h3>
+              <p class="text-xs text-[#86868B]">Para instalar o aplicativo no seu navegador:</p>
+            </div>
+
+            <div class="space-y-2 bg-[#F5F5F7] p-4 rounded-2xl text-xs text-[#1D1D1F]">
+              <p>• <strong>No Chrome / Edge:</strong> Clique no ícone de computador/instalação na barra de endereços (ao lado da estrela de favoritos) ou no menu de 3 pontos &gt; <strong>"Instalar EduScale"</strong>.</p>
+              <p>• <strong>No Android:</strong> Toque no menu de 3 pontos &gt; <strong>"Adicionar à tela inicial"</strong> ou <strong>"Instalar aplicativo"</strong>.</p>
+            </div>
+
+            <button onclick="pwaState.showGeneralGuide = false; renderApp();" class="w-full py-2.5 bg-[#1D1D1F] hover:bg-black text-white text-xs font-semibold rounded-xl transition-all">
+              Fechar
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // Inicialização
+    checkSession();
+  </script>
+</body>
+</html>
