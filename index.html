@@ -772,7 +772,7 @@
                     <span>Instalar</span>
                   </button>
                 ` : ''}
-                <button onclick="openTeacherManagement();" class="p-2 text-[#1D1D1F] bg-[#F5F5F7] border border-[#E5E5EA] rounded-xl touch-target">
+                <button data-management-trigger onclick="openTeacherManagement();" class="p-2 text-[#1D1D1F] bg-[#F5F5F7] border border-[#E5E5EA] rounded-xl touch-target">
                   <i data-lucide="users" class="w-4 h-4 text-[#0071E3]"></i>
                 </button>
                 <button data-report-button aria-label="Relatório PDF" onclick="openReportModal()" class="p-2 text-white bg-[#0071E3] rounded-xl touch-target">
@@ -829,7 +829,7 @@
                 </span>
               `}
 
-              <button onclick="openTeacherManagement();" class="px-3.5 py-2 text-xs font-medium text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E5E5EA] border border-[#E5E5EA] rounded-xl transition-all active:scale-[0.98] flex items-center gap-1.5 touch-target">
+              <button data-management-trigger onclick="openTeacherManagement();" class="px-3.5 py-2 text-xs font-medium text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E5E5EA] border border-[#E5E5EA] rounded-xl transition-all active:scale-[0.98] flex items-center gap-1.5 touch-target">
                 <i data-lucide="users" class="w-4 h-4 text-[#0071E3]"></i>
                 <span>Professores</span>
               </button>
@@ -843,7 +843,7 @@
         </header>
 
         <!-- Corpo Principal -->
-        ${state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
+        ${state.isManagementModalOpen ? renderTeacherManagementPage() : state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16 space-y-6">
 
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -1107,7 +1107,7 @@
         
 
         <!-- MODAL DE GERENCIAMENTO DE PROFESSORES -->
-        ${state.isManagementModalOpen ? renderTeacherManagementModal() : ''}
+
 
         <!-- FEEDBACK TOAST ESTILO APPLE -->
         ${state.toast ? `
@@ -1765,26 +1765,51 @@
     }
 
     // ==========================================
-    // 16. MODAL DE GERENCIAMENTO DE PROFESSORES
+    // 16. PÁGINA DE GERENCIAMENTO DE PROFESSORES
     // ==========================================
+    const managementRoute = '#quadro-de-professores';
+    let managementReturnHash = '';
+    let managementReturnScroll = 0;
     let managementActiveTab = 'titulares';
+    function syncManagementRoute() {
+      state.isManagementModalOpen = location.hash === managementRoute;
+      renderApp();
+      window.scrollTo(0, state.isManagementModalOpen ? 0 : managementReturnScroll);
+    }
+    window.addEventListener('hashchange', syncManagementRoute);
+    state.isManagementModalOpen = location.hash === managementRoute;
+    function closeTeacherManagement() {
+      history.replaceState(null, '', location.pathname + location.search + managementReturnHash);
+      state.isManagementModalOpen = false;
+      renderApp();
+      window.scrollTo(0, managementReturnScroll);
+      document.querySelector('[data-management-trigger]')?.focus({ preventScroll: true });
+    }
     let managementFeedback = '';
 
     function openTeacherManagement(tab = managementActiveTab) {
+      if (!state.isManagementModalOpen) {
+        managementReturnHash = location.hash;
+        managementReturnScroll = window.scrollY;
+        history.pushState(null, '', managementRoute);
+        window.scrollTo(0, 0);
+      }
+      state.isSearchDropdownOpen = false;
       managementActiveTab = tab;
       managementFeedback = '';
       state.isManagementModalOpen = true;
       renderApp();
-      document.getElementById('modalNewTeacherName')?.focus({ preventScroll: true });
+      document.getElementById('managementTitle')?.focus({ preventScroll: true });
     }
 
-    function renderTeacherManagementModal() {
+    function renderTeacherManagementPage() {
       const titulares = state.teachers.titulares;
       const substitutos = state.teachers.substitutos;
 
       return `
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 ios-blur" onclick="state.isManagementModalOpen = false; renderApp();">
-          <div role="dialog" aria-modal="true" aria-labelledby="managementTitle" class="w-full max-w-2xl md:max-w-4xl bg-white rounded-3xl shadow-2xl p-5 sm:p-7 space-y-5 max-h-[90dvh] overflow-y-auto" onclick="event.stopPropagation()">
+        <main aria-labelledby="managementTitle" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16">
+          <div class="w-full min-w-0 bg-white rounded-3xl border border-[#E5E5EA] p-5 sm:p-7 space-y-5">
+            <button type="button" onclick="closeTeacherManagement()" class="touch-target flex items-center gap-2 text-sm font-semibold text-[#0071E3]"><i data-lucide="arrow-left" class="w-4 h-4"></i>Voltar</button>
 
             <div class="flex items-center justify-between border-b border-[#E5E5EA] pb-3.5">
               <div class="flex items-center gap-2.5">
@@ -1792,22 +1817,20 @@
                   <i data-lucide="users" class="w-4 h-4"></i>
                 </div>
                 <div>
-                  <h3 id="managementTitle" class="text-base font-semibold text-[#1D1D1F] tracking-tight">Quadro de Professores</h3>
+                  <h2 tabindex="-1" id="managementTitle" class="text-base font-semibold text-[#1D1D1F] tracking-tight">Quadro de Professores</h2>
                   <p class="text-xs text-[#86868B]">Gerenciamento de titulares e banco de substitutos</p>
                 </div>
               </div>
-              <button onclick="state.isManagementModalOpen = false; renderApp();" class="w-8 h-8 rounded-full bg-[#F5F5F7] flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F]">
-                <i data-lucide="x" class="w-4 h-4"></i>
-              </button>
+
             </div>
 
             <div class="bg-[#E5E5EA]/75 p-1 rounded-2xl flex items-center gap-1">
-              <button onclick="openTeacherManagement('titulares');" class="flex-1 py-2 px-3 text-xs sm:text-sm font-medium rounded-xl transition-all ${
+              <button onclick="openTeacherManagement('titulares');" class="flex-1 min-w-0 py-2 px-2 sm:px-3 text-xs sm:text-sm font-medium rounded-xl transition-all ${
                 managementActiveTab === 'titulares' ? 'bg-white text-[#1D1D1F] shadow-xs font-semibold' : 'text-[#8E8E93] hover:text-[#1D1D1F]'
               }">
                 Professores Titulares (${titulares.length})
               </button>
-              <button onclick="openTeacherManagement('substitutos');" class="flex-1 py-2 px-3 text-xs sm:text-sm font-medium rounded-xl transition-all ${
+              <button onclick="openTeacherManagement('substitutos');" class="flex-1 min-w-0 py-2 px-2 sm:px-3 text-xs sm:text-sm font-medium rounded-xl transition-all ${
                 managementActiveTab === 'substitutos' ? 'bg-white text-[#1D1D1F] shadow-xs font-semibold' : 'text-[#8E8E93] hover:text-[#1D1D1F]'
               }">
                 Professores Substitutos (${substitutos.length})
@@ -1833,22 +1856,22 @@
               <section class="min-w-0 space-y-3" aria-label="Registros cadastrados">
                 <h4 class="text-xs font-semibold text-[#86868B] uppercase tracking-wide">${managementActiveTab === 'titulares' ? 'Titulares cadastrados' : 'Substitutos cadastrados'}</h4>
                 ${(managementActiveTab === 'titulares' ? titulares : substitutos).length === 0 ? '<p class="p-4 text-sm text-[#86868B] bg-[#F5F5F7] rounded-2xl">Nenhum cadastro ainda. Preencha o formulário para começar.</p>' : ''}
-            <div class="space-y-2 max-h-[280px] md:max-h-[min(420px,45dvh)] overflow-y-auto pr-1">
+            <div class="space-y-2">
               ${(managementActiveTab === 'titulares' ? titulares : substitutos).map((t, idx) => {
                 const name = typeof t === 'string' ? t : (t.name || '');
                 const phone = typeof t === 'object' ? t.phone : null;
                 return `
-                  <div class="p-3 bg-[#F5F5F7] hover:bg-[#EBF3FF] rounded-2xl flex items-center justify-between text-xs">
+                  <div class="p-3 bg-[#F5F5F7] hover:bg-[#EBF3FF] rounded-2xl flex items-center justify-between gap-2 text-xs">
                     <div class="flex items-center gap-3 min-w-0">
-                      <div class="w-8 h-8 rounded-full bg-white border border-[#E5E5EA] flex items-center justify-center font-bold text-[#0071E3]">
+                      <div class="w-8 h-8 shrink-0 rounded-full bg-white border border-[#E5E5EA] flex items-center justify-center font-bold text-[#0071E3]">
                         ${name.split(' ').map(n=>n[0]).slice(0,2).join('')}
                       </div>
-                      <div>
+                      <div class="min-w-0 [overflow-wrap:anywhere]">
                         <div class="font-medium text-[#1D1D1F] break-words">${name}</div>
                         ${phone ? `<div class="text-[10px] text-[#86868B]">${phone}</div>` : ''}
                       </div>
                     </div>
-                    <button onclick="removeTeacherFromModal(${idx}, '${managementActiveTab}')" class="p-2 text-[#86868B] hover:text-red-600 rounded-xl">
+                    <button onclick="removeTeacherFromModal(${idx}, '${managementActiveTab}')" aria-label="Excluir professor" class="touch-target shrink-0 p-2 text-[#86868B] hover:text-red-600 rounded-xl">
                       <i data-lucide="trash-2" class="w-4 h-4"></i>
                     </button>
                   </div>
@@ -1860,12 +1883,12 @@
             </div>
 
             <div class="pt-2 border-t border-[#E5E5EA] flex justify-end">
-              <button onclick="state.isManagementModalOpen = false; renderApp();" class="px-5 py-2.5 bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium rounded-xl">
+              <button onclick="closeTeacherManagement()" class="px-5 py-2.5 bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium rounded-xl">
                 Concluir
               </button>
             </div>
           </div>
-        </div>
+        </main>
       `;
     }
 
@@ -1977,4 +2000,3 @@
   </script>
 </body>
 </html>
-
