@@ -627,17 +627,38 @@
     // ==========================================
     // 8. RELATÓRIO PDF DE SUBSTITUIÇÕES
     // ==========================================
+    const reportRoute = '#relatorio-de-substituicoes';
+    let reportReturnHash = '';
+    let reportReturnScroll = 0;
+    function syncReportRoute() {
+      const wasReport = state.isReportModalOpen;
+      state.isReportModalOpen = location.hash === reportRoute;
+      state.isManagementModalOpen = location.hash === '#quadro-de-professores';
+      renderApp();
+      window.scrollTo(0, state.isReportModalOpen || state.isManagementModalOpen ? 0 : wasReport ? reportReturnScroll : managementReturnScroll);
+    }
+    state.isReportModalOpen = location.hash === reportRoute;
     function openReportModal() {
+      if (!state.isReportModalOpen) {
+        reportReturnHash = location.hash;
+        reportReturnScroll = window.scrollY;
+        history.pushState(null, '', reportRoute);
+      }
+      state.isSearchDropdownOpen = false;
       state.reportDay = state.selectedDay;
       state.isReportModalOpen = true;
       renderApp();
-      document.getElementById('reportPeriod').focus();
+      window.scrollTo(0, 0);
+      document.getElementById('reportTitle')?.focus({ preventScroll: true });
     }
 
     function closeReportModal() {
+      history.replaceState(null, '', location.pathname + location.search + reportReturnHash);
+      state.isManagementModalOpen = location.hash === '#quadro-de-professores';
       state.isReportModalOpen = false;
       renderApp();
-      document.querySelector('[data-report-button]')?.focus();
+      window.scrollTo(0, reportReturnScroll);
+      document.querySelector('[data-report-button]')?.focus({ preventScroll: true });
     }
 
     document.addEventListener('keydown', event => {
@@ -690,20 +711,22 @@
         }
         const suffix = state.reportPeriod === 'week' ? 'semana' : WEEK_SHORT[state.reportDay].toLowerCase();
         pdf.save(`eduscale_substituicoes_${suffix}_${new Date().toISOString().slice(0, 10)}.pdf`);
-        closeReportModal();
         showToast('Download do PDF iniciado.');
       } catch (error) {
         showToast('Não foi possível gerar o PDF. Tente novamente.');
       }
     }
 
-    function renderReportModal() {
+    function renderReportPage() {
+      const list = reportSlots();
+      const assigned = list.filter(s => s.status === 'substituido' && s.substituteTeacher).length;
+      const esc = allocationEscape;
       return `
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 ios-blur" onclick="closeReportModal()">
-          <div role="dialog" aria-modal="true" aria-labelledby="reportTitle" class="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 space-y-4" onclick="event.stopPropagation()">
+        <main aria-labelledby="reportTitle" class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16">
+          <section class="min-w-0 bg-white rounded-3xl border border-[#E5E5EA] p-5 sm:p-7 space-y-4">
+            <button type="button" onclick="closeReportModal()" class="touch-target flex items-center gap-2 text-sm font-semibold text-[#0071E3]"><i data-lucide="arrow-left" class="w-4 h-4"></i>Voltar</button>
             <div class="flex items-center justify-between gap-3">
-              <h3 id="reportTitle" class="text-base font-bold">Relatório de substituições</h3>
-              <button aria-label="Fechar relatório" class="touch-target rounded-xl" onclick="closeReportModal()">×</button>
+              <h2 id="reportTitle" tabindex="-1" class="text-xl sm:text-2xl font-bold">Relatório de substituições</h2>
             </div>
             <p class="text-sm text-[#6E6E73]">Aulas com falta, professor titular e substituto de todos os turnos e turmas. Aulas sem substituto aparecem como “A definir”.</p>
             <label for="reportPeriod" class="block text-xs font-semibold">Período</label>
@@ -713,13 +736,25 @@
             </select>
             ${state.reportPeriod === 'day' ? `
               <label for="reportDay" class="block text-xs font-semibold">Dia da semana</label>
-              <select id="reportDay" class="w-full p-3 bg-[#F5F5F7] rounded-xl text-sm" onchange="state.reportDay = this.value">
+              <select id="reportDay" class="w-full p-3 bg-[#F5F5F7] rounded-xl text-sm" onchange="state.reportDay = this.value; renderApp(); document.getElementById('reportDay').focus({ preventScroll: true });">
                 ${WEEK_DAYS.map(day => `<option ${day === state.reportDay ? 'selected' : ''}>${day}</option>`).join('')}
               </select>` : ''}
+            <div role="status" aria-live="polite" class="flex flex-wrap gap-3 text-sm text-[#6E6E73]">
+              <span>Aulas: ${list.length}</span><span>Com substituto: ${assigned}</span><span>A definir: ${list.length - assigned}</span>
+            </div>
+            <section aria-label="Substituições no período" class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              ${list.length ? list.map(slot => `
+                <article class="min-w-0 p-4 bg-[#F5F5F7] rounded-2xl space-y-2 text-sm [overflow-wrap:anywhere]">
+                  <h3 class="font-semibold">${esc(slot.day)} · ${esc(slot.shift)} · ${esc(formatClassName(slot.className))}</h3>
+                  <p class="text-[#6E6E73]">${esc(slot.slotLabel)} · ${esc(slot.timeRange)}</p>
+                  <p><span class="font-semibold">Titular:</span> ${esc(slot.regularTeacher || 'Sem titular')}</p>
+                  <p><span class="font-semibold">Substituto:</span> ${esc(slot.status === 'substituido' && slot.substituteTeacher ? slot.substituteTeacher : 'A definir')}</p>
+                </article>`).join('') : '<p class="text-sm text-[#6E6E73] lg:col-span-2">Nenhuma falta ou substituição registrada neste período.</p>'}
+            </section>
             <p class="text-xs text-[#86868B]">Usa a grade semanal atual. O PDF é baixado no aparelho conforme as configurações do navegador.</p>
             <button onclick="exportPDF()" class="w-full touch-target py-3 bg-[#0071E3] text-white text-sm font-semibold rounded-xl">Baixar PDF</button>
-          </div>
-        </div>`;
+          </section>
+        </main>`;
     }
 
     // ==========================================
@@ -843,7 +878,7 @@
         </header>
 
         <!-- Corpo Principal -->
-        ${state.isManagementModalOpen ? renderTeacherManagementPage() : state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
+        ${state.isReportModalOpen ? renderReportPage() : state.isManagementModalOpen ? renderTeacherManagementPage() : state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16 space-y-6">
 
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -1084,7 +1119,7 @@
           </div>
         </main>`}
 
-        ${state.isReportModalOpen ? renderReportModal() : ''}
+
 
 
 
@@ -1772,15 +1807,14 @@
     let managementReturnScroll = 0;
     let managementActiveTab = 'titulares';
     function syncManagementRoute() {
-      state.isManagementModalOpen = location.hash === managementRoute;
-      renderApp();
-      window.scrollTo(0, state.isManagementModalOpen ? 0 : managementReturnScroll);
+      syncReportRoute();
     }
     window.addEventListener('hashchange', syncManagementRoute);
     state.isManagementModalOpen = location.hash === managementRoute;
     function closeTeacherManagement() {
       history.replaceState(null, '', location.pathname + location.search + managementReturnHash);
       state.isManagementModalOpen = false;
+      state.isReportModalOpen = location.hash === reportRoute;
       renderApp();
       window.scrollTo(0, managementReturnScroll);
       document.querySelector('[data-management-trigger]')?.focus({ preventScroll: true });
@@ -1788,13 +1822,14 @@
     let managementFeedback = '';
 
     function openTeacherManagement(tab = managementActiveTab) {
-      if (!state.isManagementModalOpen) {
+      if (!state.isManagementModalOpen || state.isReportModalOpen) {
         managementReturnHash = location.hash;
         managementReturnScroll = window.scrollY;
         history.pushState(null, '', managementRoute);
         window.scrollTo(0, 0);
       }
       state.isSearchDropdownOpen = false;
+      state.isReportModalOpen = false;
       managementActiveTab = tab;
       managementFeedback = '';
       state.isManagementModalOpen = true;
