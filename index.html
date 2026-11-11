@@ -829,6 +829,7 @@
         </header>
 
         <!-- Corpo Principal -->
+        ${state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16 space-y-6">
 
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -1067,7 +1068,7 @@
               </div>
             </div>
           </div>
-        </main>
+        </main>`}
 
         ${state.isReportModalOpen ? renderReportModal() : ''}
 
@@ -1090,7 +1091,7 @@
         ${state.conflictAlert ? renderConflictModal() : ''}
 
         <!-- GAVETA INFERIOR (BOTTOM SHEET) PARA TOQUE TOUCH -->
-        ${state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : ''}
+        
 
         <!-- MODAL DE GERENCIAMENTO DE PROFESSORES -->
         ${state.isManagementModalOpen ? renderTeacherManagementModal() : ''}
@@ -1622,6 +1623,7 @@
       const first = slots.find(slot => slot.day === state.selectedDay && slot.className === state.selectedClass && slot.shift === state.selectedShift) || slots.find(slot => slot.day === state.selectedDay) || slots[0];
       state.activeBottomSheetSlotId = slotId || first?.id || 'empty';
       renderApp();
+      window.scrollTo({ top: 0, behavior: 'instant' });
       document.getElementById('allocationLesson')?.focus({ preventScroll: true });
     }
 
@@ -1651,13 +1653,13 @@
       const slots = allocationSlots();
       const esc = allocationEscape;
       return `
-        <div class="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-5 bg-black/40 ios-blur" onclick="closeAllocation()">
-          <section id="allocationDialog" role="dialog" aria-modal="true" aria-labelledby="allocationTitle" class="w-full md:max-w-4xl bg-white rounded-t-3xl md:rounded-3xl shadow-2xl max-h-[92dvh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
-            <header class="flex items-start justify-between gap-3 p-5 border-b border-[#E5E5EA] shrink-0">
-              <div><h3 id="allocationTitle" class="text-base font-semibold">Alocar Professor Substituto</h3><p class="text-xs text-[#6E6E73] mt-1">Selecione a aula e confirme a substituição.</p></div>
-              <button type="button" aria-label="Fechar alocação" onclick="closeAllocation()" class="touch-target rounded-full bg-[#F5F5F7] flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+        <main id="allocationDialog" aria-labelledby="allocationTitle" class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+          <section class="bg-white border border-[#E5E5EA] rounded-3xl shadow-sm overflow-hidden">
+            <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-5 border-b border-[#E5E5EA]">
+              <div><h2 id="allocationTitle" class="text-xl sm:text-2xl font-bold">Alocação de Professores Substitutos</h2><p class="text-xs text-[#6E6E73] mt-1">Selecione a aula e confirme a substituição.</p></div>
+              <button type="button" onclick="closeAllocation()" class="touch-target self-start sm:self-auto px-4 py-2 rounded-xl bg-[#F5F5F7] text-sm font-semibold flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i>Voltar</button>
             </header>
-            <div class="grid md:grid-cols-2 min-h-0 overflow-y-auto">
+            <div class="grid md:grid-cols-2">
               <form onsubmit="event.preventDefault(); addAndAssignFromSheet(state.activeBottomSheetSlotId)" class="p-5 space-y-4 md:border-r border-[#E5E5EA]">
                 <div class="space-y-2">
                   <label for="allocationLesson" class="block text-sm font-semibold">1. Professor ausente / aula</label>
@@ -1676,7 +1678,7 @@
               <aside class="p-5 bg-[#F5F5F7]/50 min-w-0 flex flex-col gap-3">
                 <label for="allocationSearch" class="text-sm font-semibold">Substitutos e disponibilidade</label>
                 <input id="allocationSearch" type="search" oninput="filterAllocationTeachers(this.value)" placeholder="Filtrar por nome…" class="touch-target w-full border border-[#D2D2D7] rounded-xl px-3 text-sm focus:ring-2 focus:ring-blue-200" />
-                <div class="space-y-2 max-h-60 md:max-h-[min(360px,45dvh)] overflow-y-auto">
+                <div class="space-y-2 md:max-h-[65vh] md:overflow-y-auto">
                   ${state.teachers.substitutos.map((sub, index) => {
                     const name = getSubName(sub);
                     const conflict = slot && checkScheduleConflict(name, slot.id);
@@ -1687,18 +1689,13 @@
               </aside>
             </div>
           </section>
-        </div>`;
+        </main>`;
     }
 
     document.addEventListener('keydown', event => {
       if (!state.activeBottomSheetSlotId || state.conflictAlert) return;
       if (event.key === 'Escape') { event.preventDefault(); closeAllocation(); }
-      if (event.key === 'Tab') {
-        const elements = [...document.querySelectorAll('#allocationDialog button:not(:disabled), #allocationDialog input:not(:disabled), #allocationDialog select:not(:disabled)')].filter(el => !el.closest('[hidden]'));
-        const first = elements[0], last = elements[elements.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-      }
+
     });
 
     function addAndAssignFromSheet(slotId) {
