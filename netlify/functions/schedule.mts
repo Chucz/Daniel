@@ -3,7 +3,9 @@ import { eq } from 'drizzle-orm';
 import { schedules } from '../../db/schema.js';
 import { isAuthenticated } from '../lib/auth.mjs';
 
-// Each browser owns its schedule, as in the previous local-only application.
+// This installation has one school and one shared login. The server owns the
+// schedule ID so all authenticated browsers use the same data.
+const SHARED_SCHEDULE_ID = '00000000-0000-4000-8000-000000000001';
 export default async (request: Request) => {
   const headers = new Headers({ 'Cache-Control': 'no-store' });
   const respond = (data: unknown, status = 200) => Response.json(data, { status, headers });
@@ -16,12 +18,7 @@ export default async (request: Request) => {
   if (request.method === 'PUT' && request.headers.get('origin') !== new URL(request.url).origin) {
     return respond({ error: 'Origem inválida' }, 403);
   }
-  const cookie = request.headers.get('cookie')?.match(/(?:^|;\s*)eduscale_schedule=([a-f0-9-]{36})(?:;|$)/)?.[1];
-  const id = cookie || crypto.randomUUID();
-  if (!cookie) {
-    if (request.method !== 'GET') return respond({ error: 'Recarregue a aplicação' }, 401);
-    headers.set('Set-Cookie', `eduscale_schedule=${id}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`);
-  }
+  const id = SHARED_SCHEDULE_ID;
   try {
     const db = database();
     if (request.method === 'GET') {

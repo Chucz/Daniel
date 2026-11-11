@@ -17,7 +17,9 @@ O esquema inicial está em `db/supabase-setup.sql`, aplicado ao projeto pelo ger
 2. No SQL Editor do Supabase, habilite o login do papel com uma senha forte e exclusiva: `ALTER ROLE eduscale_app LOGIN PASSWORD 'SUA_SENHA_FORTE';`. Faça isso diretamente no painel, sem salvar a senha em arquivos SQL ou no GitHub.
 3. No painel **Connect**, copie a URI de **Transaction pooler**. Use `eduscale_app.tdxlwvjqlgcofqqdlois` como usuário, sua senha codificada para URL, o host mostrado no painel e a porta `6543`.
 4. No Netlify, configure `SUPABASE_DATABASE_URL` como variável secreta disponível para **Functions** no ambiente de produção. Não use variáveis públicas. Mantenha `AUTH_USER` e `AUTH_PASSWORD`.
-5. Faça um novo deploy. Entre, salve uma alteração na grade e recarregue para conferir a persistência no Supabase. As grades continuam vinculadas ao navegador pelo cookie atual.
+5. Faça um novo deploy. Entre, salve uma alteração na grade e recarregue para conferir a persistência no Supabase. Todos os dispositivos autenticados usam os mesmos cadastros e a mesma grade da escola, com um ID fixo definido no servidor. O antigo cookie `eduscale_schedule` não é usado para escolher os dados.
+
+Atualize a página para carregar alterações feitas em outro dispositivo. Como o salvamento envia a grade completa, evite editar em dois dispositivos ao mesmo tempo: o último salvamento prevalece.
 
 O driver usa TLS e uma conexão por instância. Prepared statements estão desativados para compatibilidade com o Transaction pooler.
 
