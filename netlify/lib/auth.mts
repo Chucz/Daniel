@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { drizzle } from 'drizzle-orm/netlify-db';
+import { database } from './database.mjs';
 import { and, eq, gt, lt } from 'drizzle-orm';
 import { authSessions } from '../../db/schema.js';
 
@@ -27,7 +27,7 @@ export function sessionCookie(request: Request, token = '', maxAge: number | nul
 export async function isAuthenticated(request: Request) {
   const token = readToken(request);
   if (!token) return false;
-  const [session] = await drizzle().select().from(authSessions).where(and(
+  const [session] = await database().select().from(authSessions).where(and(
     eq(authSessions.tokenHash, digest(token)), gt(authSessions.expiresAt, new Date()),
     eq(authSessions.credentialHash, credentials().fingerprint)
   ));
@@ -35,10 +35,10 @@ export async function isAuthenticated(request: Request) {
 }
 export async function revokeSession(request: Request) {
   const token = readToken(request);
-  if (token) await drizzle().delete(authSessions).where(eq(authSessions.tokenHash, digest(token)));
+  if (token) await database().delete(authSessions).where(eq(authSessions.tokenHash, digest(token)));
 }
 export async function createSession(request: Request, rememberMe = false) {
-  const db = drizzle();
+  const db = database();
   await revokeSession(request);
   await db.delete(authSessions).where(lt(authSessions.expiresAt, new Date()));
   const token = randomBytes(32).toString('hex');

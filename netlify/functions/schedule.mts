@@ -1,4 +1,4 @@
-import { drizzle } from 'drizzle-orm/netlify-db';
+import { database } from '../lib/database.mjs';
 import { eq } from 'drizzle-orm';
 import { schedules } from '../../db/schema.js';
 import { isAuthenticated } from '../lib/auth.mjs';
@@ -23,7 +23,7 @@ export default async (request: Request) => {
     headers.set('Set-Cookie', `eduscale_schedule=${id}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`);
   }
   try {
-    const db = drizzle();
+    const db = database();
     if (request.method === 'GET') {
       const [row] = await db.select().from(schedules).where(eq(schedules.id, id));
       return respond(row?.data || { teachers: { titulares: [], substitutos: [] }, slots: {} });
