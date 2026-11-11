@@ -330,6 +330,7 @@
     function openAssignTitularModal(slotId) {
       state.assignTitularModalSlotId = slotId;
       renderApp();
+      window.scrollTo(0, 0);
     }
 
     function saveTitularToSlot(slotId, teacherName) {
@@ -829,7 +830,7 @@
         </header>
 
         <!-- Corpo Principal -->
-        ${state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
+        ${state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : state.assignTitularModalSlotId ? renderAssignTitularModal() : state.isManagementModalOpen ? renderTeacherManagementModal() : `
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16 space-y-6">
 
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -1073,7 +1074,7 @@
         ${state.isReportModalOpen ? renderReportModal() : ''}
 
         <!-- MODAL: ATRIBUIR / EDITAR PROFESSOR TITULAR NO BLOCO -->
-        ${state.assignTitularModalSlotId ? renderAssignTitularModal() : ''}
+        
 
         <!-- MODAL: CONFIRMAR DESVINCULAÇÃO DO PROFESSOR TITULAR -->
         ${state.removeTitularConfirmSlotId ? renderRemoveTitularConfirmModal() : ''}
@@ -1094,7 +1095,7 @@
         
 
         <!-- MODAL DE GERENCIAMENTO DE PROFESSORES -->
-        ${state.isManagementModalOpen ? renderTeacherManagementModal() : ''}
+        
 
         <!-- FEEDBACK TOAST ESTILO APPLE -->
         ${state.toast ? `
@@ -1288,11 +1289,11 @@
       const titularesList = state.teachers.titulares;
 
       return `
-        <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/45 ios-blur animate-in fade-in duration-200" onclick="state.assignTitularModalSlotId = null; renderApp();">
-          <div class="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 sm:p-7 space-y-4 max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-200" onclick="event.stopPropagation()">
+        <main class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+          <section class="w-full bg-white border border-[#E5E5EA] rounded-3xl shadow-sm p-5 sm:p-8 space-y-6">
 
             <!-- Apple Grab Handle no mobile -->
-            <div class="w-10 h-1.5 bg-[#D2D2D7] rounded-full mx-auto sm:hidden mb-2"></div>
+            
 
             <div class="flex items-start justify-between border-b border-[#E5E5EA] pb-3.5">
               <div>
@@ -1303,8 +1304,8 @@
                   <span class="font-medium text-[#1D1D1F]">${formatClassName(slot.className)}</span> · ${slot.day} · ${slot.timeRange} (${slot.slotLabel})
                 </div>
               </div>
-              <button onclick="state.assignTitularModalSlotId = null; renderApp();" class="w-8 h-8 rounded-full bg-[#F5F5F7] hover:bg-[#E5E5EA] flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F]">
-                <i data-lucide="x" class="w-4 h-4"></i>
+              <button onclick="state.assignTitularModalSlotId = null; renderApp();" class="touch-target px-4 py-2 rounded-xl bg-[#F5F5F7] hover:bg-[#E5E5EA] flex items-center gap-2 text-sm font-semibold">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i><span>Voltar</span>
               </button>
             </div>
 
@@ -1313,7 +1314,7 @@
               <label class="text-xs font-semibold text-[#1D1D1F] block">
                 Nome do Professor Titular:
               </label>
-              <div class="flex gap-2">
+              <div class="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
                   id="assignTitularInput"
@@ -1334,7 +1335,7 @@
                 Ou selecione um professor já cadastrado:
               </div>
 
-              <div class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 ${titularesList.map(name => `
                   <button onclick="saveTitularToSlot('${slot.id}', '${name.replace(/'/g, "\\'")}')"
                     class="w-full p-2.5 bg-[#F5F5F7] hover:bg-blue-50 border border-transparent hover:border-blue-200 rounded-xl flex items-center justify-between transition-all active:scale-[0.98] text-left touch-target">
@@ -1376,8 +1377,8 @@
                 </button>
               </div>
             `}
-          </div>
-        </div>
+          </section>
+        </main>
       `;
     }
 
@@ -1763,6 +1764,7 @@
       managementFeedback = '';
       state.isManagementModalOpen = true;
       renderApp();
+      window.scrollTo(0, 0);
       document.getElementById('modalNewTeacherName')?.focus({ preventScroll: true });
     }
 
@@ -1771,10 +1773,10 @@
       const substitutos = state.teachers.substitutos;
 
       return `
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 ios-blur" onclick="state.isManagementModalOpen = false; renderApp();">
-          <div role="dialog" aria-modal="true" aria-labelledby="managementTitle" class="w-full max-w-2xl md:max-w-4xl bg-white rounded-3xl shadow-2xl p-5 sm:p-7 space-y-5 max-h-[90dvh] overflow-y-auto" onclick="event.stopPropagation()">
+        <main class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+          <section aria-labelledby="managementTitle" class="w-full bg-white border border-[#E5E5EA] rounded-3xl shadow-sm p-5 sm:p-8 space-y-5">
 
-            <div class="flex items-center justify-between border-b border-[#E5E5EA] pb-3.5">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-[#E5E5EA] pb-3.5">
               <div class="flex items-center gap-2.5">
                 <div class="w-8 h-8 rounded-xl bg-[#0071E3]/10 flex items-center justify-center text-[#0071E3]">
                   <i data-lucide="users" class="w-4 h-4"></i>
@@ -1784,8 +1786,8 @@
                   <p class="text-xs text-[#86868B]">Gerenciamento de titulares e banco de substitutos</p>
                 </div>
               </div>
-              <button onclick="state.isManagementModalOpen = false; renderApp();" class="w-8 h-8 rounded-full bg-[#F5F5F7] flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F]">
-                <i data-lucide="x" class="w-4 h-4"></i>
+              <button onclick="state.isManagementModalOpen = false; renderApp();" class="touch-target px-4 py-2 rounded-xl bg-[#F5F5F7] flex items-center gap-2 text-sm font-semibold">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i><span>Voltar</span>
               </button>
             </div>
 
@@ -1821,7 +1823,7 @@
               <section class="min-w-0 space-y-3" aria-label="Registros cadastrados">
                 <h4 class="text-xs font-semibold text-[#86868B] uppercase tracking-wide">${managementActiveTab === 'titulares' ? 'Titulares cadastrados' : 'Substitutos cadastrados'}</h4>
                 ${(managementActiveTab === 'titulares' ? titulares : substitutos).length === 0 ? '<p class="p-4 text-sm text-[#86868B] bg-[#F5F5F7] rounded-2xl">Nenhum cadastro ainda. Preencha o formulário para começar.</p>' : ''}
-            <div class="space-y-2 max-h-[280px] md:max-h-[min(420px,45dvh)] overflow-y-auto pr-1">
+            <div class="space-y-2">
               ${(managementActiveTab === 'titulares' ? titulares : substitutos).map((t, idx) => {
                 const name = typeof t === 'string' ? t : (t.name || '');
                 const phone = typeof t === 'object' ? t.phone : null;
@@ -1852,8 +1854,8 @@
                 Concluir
               </button>
             </div>
-          </div>
-        </div>
+          </section>
+        </main>
       `;
     }
 
