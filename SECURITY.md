@@ -2,7 +2,7 @@
 
 ## Publicação
 
-O Netlify executa `npm run build` e publica apenas `dist/`. As funções permanecem em `netlify/functions`. Não publique a raiz do repositório, arquivos .env, esquema, testes, ferramentas ou credenciais. O build copia bibliotecas de versões fixas do package-lock; scripts de CDN não são necessários.
+O Netlify executa `npm run verify` (build e testes) e publica apenas `dist/`. As funções permanecem em `netlify/functions`. Não publique a raiz do repositório, arquivos .env, esquema, testes, ferramentas ou credenciais. O build copia bibliotecas de versões fixas do package-lock; scripts de CDN não são necessários.
 
 ## Acesso individual
 
@@ -18,9 +18,7 @@ Dados de professores são codificados antes da renderização. Eventos são call
 
 ## Gravação e recuperação
 
-O GET da grade retorna X-Schedule-Revision e ETag. PUT exige X-Schedule-Revision com a revisão lida (If-Match também é aceito quando encaminhado pela plataforma); a comparação ocorre dentro de uma transação com lock no Postgres. Gravações concorrentes desatualizadas recebem 409; clientes antigos sem revisão recebem 428 e precisam atualizar a página. O navegador oferece download da cópia local ainda não salva antes de carregar a versão atual.
-
-Cada gravação aceita registra antes/depois, usuário autenticado e horário na tabela schedule_audit, na mesma transação. A aplicação não tem privilégios de UPDATE ou DELETE nessa tabela. Uma cópia inicial da grade também foi registrada na ativação. Não é possível reconstruir autoria de alterações anteriores à implantação.
+A grade usa PATCH com versão por registro e auditoria transacional em record_audit. Registros diferentes não disputam uma revisão global. Conflitos no mesmo registro retornam 409 e mantêm o download da cópia local. PUT completo retorna 428 para exigir atualização de clientes antigos. schedule_audit e o JSON original continuam preservados como histórico anterior. Veja OPERATIONAL_CHANGES.md para migração, datas e revisão explícita dos testes antigos.
 
 A função declarada do responsável pela escolha é diferente de `substitutionRecordedBy`, e-mail do operador autenticado definido pelo servidor. Registros antigos continuam sem autoria inventada. Metadados enviados pelo navegador não substituem a identidade verificada pelo servidor.
 
@@ -33,3 +31,5 @@ A alteração aditiva está em db/security-hardening.sql e foi aplicada pelo ger
 ## Verificação recorrente
 
 Execute `npm ci`, `npm run build`, `npm test` e `npm audit`. Teste login, troca de senha, alocação, conflitos, edição e PDF. Verifique cabeçalhos CSP/nosniff/frame-ancestors após a publicação. Proteja também as contas de administração do GitHub, Netlify e Supabase com MFA e menor privilégio. Estas medidas reduzem risco; não são garantia de ausência total de falhas.
+
+Recuperação por códigos de uso único e confirmação recente da senha estão descritas em OPERATIONAL_CHANGES.md. Não há MFA, backup externo nem envio de e-mail nesta alteração.

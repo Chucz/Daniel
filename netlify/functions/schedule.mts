@@ -1,63 +1,77 @@
+import { and,asc,eq,inArray,or,ne,sql } from 'drizzle-orm';
 import { database } from '../lib/database.mjs';
-import { eq, sql } from 'drizzle-orm';
-import { schedules, scheduleAudit } from '../../db/schema.js';
-import { canEditSchedule } from '../lib/access.mjs';
-import { getSessionUser, digest } from '../lib/auth.mjs';
-const SHARED_SCHEDULE_ID = '00000000-0000-4000-8000-000000000001';
-const emptySchedule = () => ({teachers:{titulares:[],substitutos:[]},slots:{}});
-// JSONB may reorder object keys; a revision must depend on content, not property order.
-function canonicalJson(value: any): string {
-  if (Array.isArray(value)) return '['+value.map(canonicalJson).join(',')+']';
-  if (value && typeof value==='object') return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonicalJson(value[key])).join(',')+'}';
-  return JSON.stringify(value);
-}
-const revision = (data: unknown) => '\"'+digest(canonicalJson(data))+'\"';
-const roles = ['Diretor(a)','Vice-diretor(a)','Coordenador(a)'];
-const legacyClasses: Record<string,string> = {'9º Ano A':'9º Ano EF','6º Ano A':'6º Ano EF','7º Ano A':'7º Ano EF','8º Ano A':'8º Ano EF','1º EM A':'1º Ano EM','2º EM A':'2º Ano EM','3º EM A':'3º Ano EM','1º EM D':'1º Ano EM','2º EM D':'2º Ano EM','3º EM D':'3º Ano EM','2º Técnico':'2º Ano EM Técnico','3º Técnico':'3º Ano EM Técnico'};
-export default async (request: Request) => {
-  const headers=new Headers({'Cache-Control':'no-store',Vary:'Cookie'});
-  const respond=(data:unknown,status=200)=>Response.json(data,{status,headers});
-  let user;
-  try { user=await getSessionUser(request); if(!user) return respond({error:'Sessão encerrada. Entre novamente.'},401); }
-  catch { return respond({error:'Não foi possível verificar a sessão'},503); }
-  if(user.mustChangePassword) return respond({error:'Atualize sua senha para continuar.',code:'PASSWORD_CHANGE_REQUIRED'},403);
-  if(!['GET','PUT'].includes(request.method)) return respond({error:'Método inválido'},405);
-  if(request.method==='PUT' && !canEditSchedule(user)) return respond({error:'Seu perfil permite apenas consulta.',code:'FORBIDDEN'},403);
-  if(request.method==='PUT' && request.headers.get('origin')!==new URL(request.url).origin) return respond({error:'Origem inválida'},403);
-  const id=SHARED_SCHEDULE_ID;
-  try {
-    const db=database();
-    if(request.method==='GET') { const [row]=await db.select().from(schedules).where(eq(schedules.id,id));const data=row?.data||emptySchedule();headers.set('ETag',revision(data));headers.set('X-Schedule-Revision',revision(data));return respond(data); }
-    if(!request.headers.get('content-type')?.includes('application/json'))return respond({error:'Formato inválido'},415);
-    const expected=(request.headers.get('x-schedule-revision') || request.headers.get('if-match'))?.replace(/^W\//,'');if(!expected || !/^"[a-f0-9]{64}"$/.test(expected))return respond({error:'Atualize a página antes de salvar.',code:'REVISION_REQUIRED'},428);
-    const raw=await request.text();if(raw.length>1000000)return respond({error:'Grade muito grande'},413);
-    let data;try{data=JSON.parse(raw);}catch{return respond({error:'JSON inválido'},400);}
-    const text=(v:unknown):v is string=>typeof v==='string'&&v.length<=200&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(v);
-    if(!data || !Array.isArray(data.teachers?.titulares)||!Array.isArray(data.teachers?.substitutos)||data.teachers.titulares.length>3000||data.teachers.substitutos.length>3000||
-      !data.teachers.titulares.every(text)||!data.teachers.substitutos.every((s:any)=>s&&text(s.name)&&text(s.phone))||
-      !data.slots||typeof data.slots!=='object'||Array.isArray(data.slots)||Object.keys(data.slots).length<1||Object.keys(data.slots).length>3000||
-      !Object.entries(data.slots).every(([key,s]:[string,any])=>s&&key===s.id&&text(s.id)&&text(s.day)&&text(s.shift)&&text(s.className)&&text(s.slotId)&&text(s.slotLabel)&&text(s.timeRange)&&text(s.regularTeacher)&&['regular','falta','substituido'].includes(s.status)&&(s.substituteTeacher===null||text(s.substituteTeacher))&&(s.substituteSelectedBy==null||roles.includes(s.substituteSelectedBy))))return respond({error:'Dados inválidos'},400);
-    // Lock and compare inside one transaction: concurrent writers cannot both succeed.
-    return await db.transaction(async(tx:any)=>{
-      // An advisory transaction lock also serializes initial creation of the shared row.
-      await tx.execute(sql`select pg_advisory_xact_lock(182736451)`);
-      const [row]=await tx.select().from(schedules).where(eq(schedules.id,id)).for('update');
-      const previous:any=row?.data||emptySchedule();
-      if(expected!==revision(previous))return respond({error:'Outra pessoa atualizou a grade. Baixe uma cópia local das suas alterações e carregue a versão atual antes de continuar.',code:'REVISION_CONFLICT'},409);
-      if(Object.keys(data.slots).length<Object.keys(previous.slots||{}).length)return respond({error:'A gravação removeria horários existentes. Atualize a grade antes de continuar.'},400);
-      // Ignore client-supplied identity metadata; derive it from the verified session.
-      for(const slot of Object.values(data.slots) as any[]){
-        const legacyClass=legacyClasses[slot.className];
-        const old=previous.slots?.[slot.id] || (legacyClass ? previous.slots?.[`${slot.day}__${slot.shift}__${legacyClass}__${slot.slotId}`] : undefined);
-        const changed=slot.status==='substituido'&&(old?.status!=='substituido'||old?.substituteTeacher!==slot.substituteTeacher||(old?.substituteSelectedBy||null)!==(slot.substituteSelectedBy||null));
-        if(changed&&!roles.includes(slot.substituteSelectedBy))return respond({error:'Selecione o responsável pela escolha do substituto.'},400);
-        slot.substitutionRecordedBy=changed?user.email:(old?.substitutionRecordedBy||null);
-        slot.substitutionRecordedAt=changed?new Date().toISOString():(old?.substitutionRecordedAt||null);
-        if(slot.status!=='substituido'){slot.substitutionRecordedBy=null;slot.substitutionRecordedAt=null;slot.substituteSelectedBy=null;}
-      }
-      await tx.insert(scheduleAudit).values({scheduleId:id,actorId:user.id,actorEmail:user.email,beforeData:row?.data||null,afterData:data});
-      await tx.insert(schedules).values({id,data}).onConflictDoUpdate({target:schedules.id,set:{data}});
-      headers.set('ETag',revision(data));headers.set('X-Schedule-Revision',revision(data));return respond({saved:true,slots:data.slots});
-    });
-  }catch{return respond({error:'Não foi possível acessar a grade'},503);}
+import { schoolRecords,recordAudit,appUsers } from '../../db/schema.js';
+import { getSessionUser,sameOrigin } from '../lib/auth.mjs';
+import { canEditSchedule,canManageUsers } from '../lib/access.mjs';
+import { hasRecentReauthentication } from '../lib/reauth.mjs';
+import { validDate,todayInSchool,dateForDay,monday,addDays } from '../lib/school-dates.mjs';
+import { reportServerFailure } from '../lib/telemetry.mjs';
+const roles=['Diretor(a)','Vice-diretor(a)','Coordenador(a)'];
+const text=(value:any)=>typeof value==='string'&&value.length<=200&&!/[\u0000-\u001f\u007f]/.test(value);
+class Failure extends Error { constructor(public status:number,message:string,public code:string){super(message);} }
+const conflict=()=>new Failure(409,'Este registro foi alterado por outra pessoa. Baixe sua cópia local e atualize os dados.','RECORD_CONFLICT');
+export default async(request:Request)=>{
+ const headers=new Headers({'Cache-Control':'no-store',Vary:'Cookie'}),respond=(body:unknown,status=200)=>Response.json(body,{status,headers});
+ try {
+  const user=await getSessionUser(request);if(!user)return respond({error:'Sessão encerrada. Entre novamente.'},401);
+  if(user.mustChangePassword)return respond({error:'Troque sua senha antes de continuar.'},403);
+  const db=database(),url=new URL(request.url);
+  if(request.method==='GET'){
+   const date=url.searchParams.get('date')||todayInSchool();if(!validDate(date))return respond({error:'Data inválida.'},400);
+   const legacyView=url.searchParams.get('view')==='legacy';
+   const rows=await db.select().from(schoolRecords).where(and(eq(schoolRecords.deleted,false),legacyView?eq(schoolRecords.kind,'legacy'):or(inArray(schoolRecords.kind,['teacher','lesson']),and(eq(schoolRecords.kind,'occurrence'),sql`${schoolRecords.data}->>'date' between ${monday(date)} and ${addDays(monday(date),4)}`))));
+   if(url.searchParams.get('view')==='legacy')return respond({records:rows.filter(r=>r.kind==='legacy'),referenceDate:todayInSchool()});
+   const teachers={titulares:[] as string[],substitutos:[] as any[]},slots:any={},teacherRecords=rows.filter(r=>r.kind==='teacher');
+   for(const row of teacherRecords){const data:any=row.data;if(data.type==='titular')teachers.titulares.push(data.name);else teachers.substitutos.push({name:data.name,phone:data.phone||''});}
+   const byId=new Map(rows.map(r=>[r.id,r]));
+   for(const row of rows.filter(r=>r.kind==='lesson')){const lesson:any=row.data,lessonDate=dateForDay(date,lesson.day),occ=byId.get('occurrence:'+lessonDate+':'+lesson.id),data:any=occ?.data;
+    slots[lesson.id]={...lesson,date:lessonDate,status:data?.status||'regular',substituteTeacher:data?.substituteTeacher||null,substituteSelectedBy:data?.substituteSelectedBy||null,regularTeacher:data?.status&&data.status!=='regular'?(data.regularTeacherSnapshot??lesson.regularTeacher):lesson.regularTeacher,substitutionRecordedBy:data?.substitutionRecordedBy||null,substitutionRecordedAt:data?.substitutionRecordedAt||null,source:data?.source||null,lessonVersion:row.version,occurrenceVersion:occ?.version||0,templateTeacher:lesson.regularTeacher};}
+   return respond({teachers,slots,teacherRecords,date,weekStart:monday(date),weekEnd:addDays(monday(date),4),protocol:2});
+  }
+  if(request.method==='PUT')return respond({error:'Atualize a página para usar a gravação por registro.',code:'CLIENT_UPDATE_REQUIRED'},428);
+  if(request.method!=='PATCH')return respond({error:'Método inválido.'},405);
+  if(!canEditSchedule(user))return respond({error:'Seu perfil permite apenas consulta.'},403);
+  if(!sameOrigin(request))return respond({error:'Origem inválida.'},403);
+  if(!request.headers.get('content-type')?.includes('application/json'))return respond({error:'Formato inválido.'},415);
+  const raw=await request.text();if(raw.length>100000)return respond({error:'Operação muito grande.'},413);
+  let input;try{input=JSON.parse(raw);}catch{return respond({error:'Dados inválidos.'},400);}
+  if(!Array.isArray(input?.operations)||input.operations.length<1||input.operations.length>100)return respond({error:'Operações inválidas.'},400);
+  const operations=input.operations;
+  for(const op of operations){if(!op||!['teacher','lesson','occurrence','legacy_import'].includes(op.kind)||!text(op.id)||!Number.isSafeInteger(op.version)||op.version<0||!op.data||typeof op.data!=='object'||Array.isArray(op.data))return respond({error:'Registro inválido.'},400);
+   if(op.kind==='teacher'&&(!/^teacher:[a-f0-9-]{36}$/i.test(op.id)||!['titular','substituto'].includes(op.data.type)||!text(op.data.name)||!op.data.name.trim()||!text(op.data.phone||'')||!['save','delete'].includes(op.action)))return respond({error:'Professor inválido.'},400);
+   if(op.kind==='lesson'&&!text(op.data.regularTeacher))return respond({error:'Professor titular inválido.'},400);
+   if(op.kind==='occurrence'&&(!validDate(op.date)||!['regular','falta','substituido'].includes(op.data.status)||(op.data.status==='substituido'&&(!text(op.data.substituteTeacher)||!op.data.substituteTeacher.trim()||!roles.includes(op.data.substituteSelectedBy)))))return respond({error:'Informe a data, o substituto e o responsável corretamente.'},400);
+   if(op.kind==='legacy_import'&&(!canManageUsers(user)||!validDate(op.date)||!Number.isSafeInteger(op.targetVersion)||op.targetVersion!==0))return respond({error:'Revisão de legado inválida.'},400);
+  }
+  if(operations.some((op:any)=>op.kind==='legacy_import')&&!await hasRecentReauthentication(request))return respond({error:'Confirme sua senha para associar os testes antigos a datas.',code:'REAUTH_REQUIRED'},403);
+  return await db.transaction(async(tx:any)=>{
+   const [currentUser]=await tx.select().from(appUsers).where(eq(appUsers.id,user.id)).for('share');
+   if(!currentUser||!currentUser.active||currentUser.passwordHash!==user.passwordHash||currentUser.mustChangePassword||!canEditSchedule(currentUser)||(operations.some((op:any)=>op.kind==='legacy_import')&&!canManageUsers(currentUser)))throw new Failure(403,'Seu acesso mudou. Entre novamente.','FORBIDDEN');
+   const changed:any[]=[];
+   const keys=operations.map((op:any)=>op.kind==='teacher'?op.id:op.kind==='lesson'?'lesson:'+op.id:op.kind==='legacy_import'?op.id:'occurrence:'+op.date+':'+op.id);
+   if(new Set(keys).size!==keys.length)throw new Failure(400,'Operações duplicadas.','INVALID_OPERATIONS');
+   // Lock only touched existing records, in a deterministic order. Unrelated records never share a global revision.
+   await tx.select().from(schoolRecords).where(inArray(schoolRecords.id,keys)).orderBy(asc(schoolRecords.id)).for('update');
+   const ordered=operations.map((op:any,i:number)=>({...op,key:keys[i]})).sort((a:any,b:any)=>a.key.localeCompare(b.key));
+   for(const op of ordered){const [old]=await tx.select().from(schoolRecords).where(eq(schoolRecords.id,op.key));
+    if((old?.version||0)!==op.version||old?.deleted)throw conflict();
+    let data:any,kind=op.kind,deleted=false;
+    if(kind==='teacher'){data={type:op.data.type,name:op.data.name.trim(),phone:op.data.phone||''};deleted=op.action==='delete';if(deleted&&!old)throw conflict();}
+    if(kind==='lesson'){if(!old||old.kind!=='lesson')throw new Failure(400,'Aula não encontrada.','INVALID_LESSON');data={...old.data,regularTeacher:op.data.regularTeacher.trim()};}
+    if(kind==='occurrence'){
+     const [lesson]=await tx.select().from(schoolRecords).where(eq(schoolRecords.id,'lesson:'+op.id));if(!lesson||lesson.kind!=='lesson'||dateForDay(op.date,(lesson.data as any).day)!==op.date)throw new Failure(400,'A data não corresponde ao dia desta aula.','INVALID_DATE');
+     const item:any=lesson.data;data={date:op.date,lessonId:op.id,day:item.day,shift:item.shift,className:item.className,slotId:item.slotId,slotLabel:item.slotLabel,timeRange:item.timeRange,regularTeacherSnapshot:(old?.data as any)?.status&&((old.data as any).status!=='regular')?((old.data as any).regularTeacherSnapshot??item.regularTeacher):item.regularTeacher,status:op.data.status,substituteTeacher:op.data.status==='substituido'?op.data.substituteTeacher.trim():null,substituteSelectedBy:op.data.status==='substituido'?op.data.substituteSelectedBy:null,substitutionRecordedBy:user.email,substitutionRecordedAt:new Date().toISOString(),source:(old?.data as any)?.source||'operational'};
+    }
+    if(kind==='legacy_import'){
+     if(!old||old.kind!=='legacy'||(old.data as any).reviewedDate)throw conflict();const source:any=(old.data as any).slot;
+     if(dateForDay(todayInSchool(),source.day)!==op.date)throw new Failure(400,'Revise uma data da semana atual correspondente ao dia da aula.','INVALID_DATE');
+     const target='occurrence:'+op.date+':'+source.id;const [inserted]=await tx.insert(schoolRecords).values({id:target,kind:'occurrence',data:{...source,date:op.date,lessonId:source.id,regularTeacherSnapshot:source.regularTeacher,source:'test_legacy_reviewed',substitutionRecordedBy:user.email,substitutionRecordedAt:new Date().toISOString()}}).onConflictDoNothing().returning();if(!inserted)throw conflict();changed.push(inserted);await tx.insert(recordAudit).values({recordId:target,actorId:user.id,action:'legacy_import',beforeData:null,afterData:inserted.data});
+     kind='legacy';data={...old.data,reviewedDate:op.date};
+    }
+    let saved;if(old){[saved]=await tx.update(schoolRecords).set({data,deleted,version:old.version+1,updatedAt:new Date()}).where(and(eq(schoolRecords.id,op.key),eq(schoolRecords.version,op.version))).returning();}else{[saved]=await tx.insert(schoolRecords).values({id:op.key,kind,data,deleted}).onConflictDoNothing().returning();}if(!saved)throw conflict();
+    await tx.insert(recordAudit).values({recordId:saved.id,actorId:user.id,action:op.kind==='legacy_import'?'legacy_review':deleted?'delete':old?'update':'create',beforeData:old?.data||null,afterData:saved.data});changed.push(saved);
+   }
+   return respond({saved:true,records:changed});
+  });
+ }catch(error:any){if(error instanceof Failure)return respond({error:error.message,code:error.code},error.status);if(error?.code==='23505'||error?.cause?.code==='23505')return respond({error:'Já existe um registro equivalente. Atualize os dados.',code:'RECORD_CONFLICT'},409);const requestId=await reportServerFailure('SCHEDULE_FAILURE','schedule');return respond({error:'Não foi possível acessar ou salvar os dados. Tente novamente.',requestId},503);}
 };

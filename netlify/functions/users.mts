@@ -2,8 +2,9 @@ import type { Config } from '@netlify/functions';
 import { randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { database } from '../lib/database.mjs';
-import { appUsers, authSessions, userAudit } from '../../db/schema.js';
+import { appUsers, authSessions, userAudit, recoveryCodes } from '../../db/schema.js';
 import { getSessionUser, hashPassword, sameOrigin } from '../lib/auth.mjs';
+import { hasRecentReauthentication } from '../lib/reauth.mjs';
 import { ACCESS_ROLES, canManageUsers, safeUser } from '../lib/access.mjs';
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const validName = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0 && v.trim().length <= 200 && !/[\u0000-\u001f\u007f]/.test(v);
@@ -30,6 +31,7 @@ export default async (request: Request) => {
       const users = await db.select().from(appUsers).orderBy(desc(appUsers.isPrimary), asc(appUsers.name));
       return respond({ users: users.map(safeUser) });
     }
+    if (!await hasRecentReauthentication(request)) return respond({error:'Confirme sua senha para realizar esta alteração.',code:'REAUTH_REQUIRED'},403);
     if (!request.headers.get('content-type')?.includes('application/json')) return respond({ error: 'Formato inválido.' }, 415);
     const raw = await request.text(); if (raw.length > 4096) return respond({ error: 'Requisição muito grande.' }, 413);
     let input; try { input = JSON.parse(raw); } catch { return respond({ error: 'Dados inválidos.' }, 400); }
@@ -67,6 +69,7 @@ export default async (request: Request) => {
       if (input.action === 'reset_password') { changes.passwordHash = passwordHash; changes.mustChangePassword = true; action = 'reset_password'; }
       const [updated] = await tx.update(appUsers).set(changes).where(and(eq(appUsers.id, target.id), eq(appUsers.version, input.version))).returning();
       if (!updated) return respond({ error: 'Este usuário foi alterado por outra pessoa.', code: 'VERSION_CONFLICT' }, 409);
+      if (input.action === 'reset_password') await tx.delete(recoveryCodes).where(eq(recoveryCodes.userId,target.id));
       if ((input.action === 'set_active' && !input.active) || input.action === 'reset_password') await tx.delete(authSessions).where(eq(authSessions.userId, target.id));
       await tx.insert(userAudit).values({ actorId: actor.id, targetId: target.id, action, beforeState: safeUser(target), afterState: safeUser(updated) });
       return respond({ user: safeUser(updated), ...(temporaryPassword ? { temporaryPassword } : {}) });

@@ -5,6 +5,7 @@ const { createTestEnvironment, TEST_PASSWORD } = require('./isolated-environment
 const root = path.resolve(__dirname, '..');
 function representativeSchedule() {
   const context = vm.createContext({ navigator: { userAgent: '' }, location: { hash: '' }, window: { navigator: {}, addEventListener() {}, matchMedia: () => ({ matches: false }) }, document: { referrer: '', addEventListener() {} }, setTimeout() {}, clearTimeout() {} });
+  vm.runInContext(fs.readFileSync(path.join(root,'records.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(root, 'app.js'), 'utf8').replace(/checkSession\(\);\s*$/, ''), context);
   const data = vm.runInContext('initDefaultSlots(); JSON.parse(JSON.stringify({teachers:state.teachers,slots:state.slots}))', context);
   data.teachers.titulares = ['Titular fictício de carga']; data.teachers.substitutos = [{ name: 'Substituto fictício de carga', phone: '' }];
@@ -12,7 +13,7 @@ function representativeSchedule() {
   return data;
 }
 async function runLoadTest() {
-  const env = await createTestEnvironment();
+  const data = representativeSchedule(); const env = await createTestEnvironment(data);
   try {
     const owner = await env.login(); const users = [];
     for (let i = 0; i < 10; i++) {
@@ -32,7 +33,7 @@ async function runLoadTest() {
         for (let round = 0; round < 5; round++) {
           const start = performance.now();
           const session = await env.request('/api/session', { cookie: user.cookie }); assert.equal(session.status, 200);
-          const schedule = await env.request('/.netlify/functions/schedule', { cookie: user.cookie }); assert.equal(schedule.status, 200); assert.ok(schedule.headers.get('x-schedule-revision')); await schedule.json();
+          const schedule = await env.request('/.netlify/functions/schedule', { cookie: user.cookie }); assert.equal(schedule.status, 200);  await schedule.json();
           timings.push(performance.now() - start); requests += 2;
         }
       }));
@@ -40,13 +41,14 @@ async function runLoadTest() {
       scenarios.push({ simultaneousUsers: count, requests, successfulRequests: requests, errors: 0, elapsedMs: +elapsed.toFixed(2), requestsPerSecond: +(requests/(elapsed/1000)).toFixed(2), p95SessionAndScheduleMs: +sorted[Math.ceil(sorted.length*0.95)-1].toFixed(2) });
     }
     const read = await env.request('/.netlify/functions/schedule', { cookie: users[0].cookie });
-    const current = await read.json(), revision = read.headers.get('x-schedule-revision'), first = Object.keys(current.slots)[0];
-    const writeStart = performance.now();
-    const writes = await Promise.all(users.map((user, i) => { const copy = structuredClone(current); copy.slots[first].regularTeacher = 'Gravação concorrente fictícia ' + i; return env.request('/.netlify/functions/schedule', { method: 'PUT', cookie: user.cookie, headers: { 'X-Schedule-Revision': revision }, body: copy }); }));
-    const successfulWrites = writes.filter(r => r.status === 200).length, conflicts = writes.filter(r => r.status === 409).length;
-    assert.equal(successfulWrites, 1); assert.equal(conflicts, 9);
-    const audit = await env.pg.query('select count(*)::int as count from public.schedule_audit'); assert.equal(audit.rows[0].count, 1);
-    const result = { testedAt: new Date().toISOString(), environment: { node: process.version, database: 'PGlite 0.5.16 (PostgreSQL WASM, in-memory, one serialized engine)', transport: 'actual handlers through Web Request/Response; no external hosting/network', cpu: os.cpus()[0]?.model, platform: process.platform, scheduleSlots: Object.keys(data.slots).length, scheduleBytes: Buffer.byteLength(JSON.stringify(data)), productionTouched: false }, scenarios, concurrentWrites: { users: 10, successes: successfulWrites, expectedConflicts: conflicts, errors: 0, auditRecords: audit.rows[0].count, elapsedMs: +(performance.now()-writeStart).toFixed(2) }, limits: ['Local isolated measurement, not a production capacity guarantee.', 'No Netlify cold starts, WAN latency, edge rate limiting or shared Supabase pool were measured.', 'PGlite serializes one engine; does not simulate independent PostgreSQL server connections.'] };
+    const current=await read.json(),ids=Object.keys(current.slots); const writeStart=performance.now();
+    const write=(user,id,version,name)=>env.request('/.netlify/functions/schedule',{method:'PATCH',cookie:user.cookie,body:{operations:[{kind:'lesson',id,version,data:{regularTeacher:name}}]}});
+    const independent=await Promise.all(users.map((user,i)=>write(user,ids[i],1,'Independent '+i)));assert.ok(independent.every(r=>r.status===200));
+    const writes=await Promise.all(users.map((user,i)=>write(user,ids[0],2,'Concurrent '+i)));
+    const successfulWrites=writes.filter(r=>r.status===200).length,conflicts=writes.filter(r=>r.status===409).length;
+    assert.equal(successfulWrites,1);assert.equal(conflicts,9);
+    const audit=await env.pg.query('select count(*)::int as count from public.record_audit');assert.equal(audit.rows[0].count,11);
+    const result = { testedAt: new Date().toISOString(), environment: { node: process.version, database: 'PGlite 0.5.16 (PostgreSQL WASM, in-memory, one serialized engine)', transport: 'actual handlers through Web Request/Response; no external hosting/network', cpu: os.cpus()[0]?.model, platform: process.platform, scheduleSlots: Object.keys(data.slots).length, scheduleBytes: Buffer.byteLength(JSON.stringify(data)), productionTouched: false }, scenarios, concurrentWrites: { users: 10, independentRecordSuccesses: independent.length, successes: successfulWrites, expectedConflicts: conflicts, errors: 0, auditRecords: audit.rows[0].count, elapsedMs: +(performance.now()-writeStart).toFixed(2) }, limits: ['Local isolated measurement, not a production capacity guarantee.', 'No Netlify cold starts, WAN latency, edge rate limiting or shared Supabase pool were measured.', 'PGlite serializes one engine; does not simulate independent PostgreSQL server connections.'] };
     if (process.argv[2]) fs.writeFileSync(path.resolve(process.argv[2]), JSON.stringify(result, null, 2) + '\n');
     console.log(JSON.stringify(result, null, 2)); return result;
   } finally { await env.close(); }

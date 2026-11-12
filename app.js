@@ -177,7 +177,8 @@ let scheduleRevision = null;
 let saveQueue = Promise.resolve();
 
 const state = {
-  selectedDay: 'Segunda-feira',
+  selectedDate: schoolToday(),
+  selectedDay: schoolDay(schoolToday()),
   selectedShift: 'Manhã',
   selectedCategory: 'Ensino Fundamental',
   selectedClass: '9º Ano A',
@@ -196,7 +197,7 @@ const state = {
   isManagementModalOpen: false,
   isReportModalOpen: false,
   reportPeriod: 'day',
-  reportDay: 'Segunda-feira',
+  reportDay: schoolDay(schoolToday()),
   conflictAlert: null,
 
   // Filtro lateral
@@ -218,6 +219,7 @@ function initDefaultSlots() {
           const saved = savedSlots[id] || (legacyClass ? savedSlots[legacyId] : undefined);
           state.slots[id] = {
             id, day, shift, className, slotId: slot.id,
+            date: saved?.date || dateForSchoolDay(state.selectedDate,day), lessonVersion: saved?.lessonVersion || 0, occurrenceVersion: saved?.occurrenceVersion || 0, templateTeacher: saved?.templateTeacher, source: saved?.source || null,
             slotLabel: slot.label, timeRange: slot.time,
             regularTeacher: saved?.regularTeacher || '',
             status: saved?.status || 'regular',
@@ -232,36 +234,17 @@ function initDefaultSlots() {
   });
 }
 
-function saveState() {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
-  if (!persistenceReady || !authState.authenticated) return;
-  const snapshot = JSON.parse(JSON.stringify({ teachers: state.teachers, slots: state.slots }));
-  saveQueue = saveQueue.then(async () => {
-    try {
-      if (!authState.authenticated || persistenceConflict) return;
-      const response = await fetch('/.netlify/functions/schedule', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Schedule-Revision': scheduleRevision || '' }, body: JSON.stringify(snapshot)
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        if (response.status === 409 || response.status === 428) persistenceConflict = true;
-        throw new Error(result.error || 'Não foi possível salvar. Tente novamente.');
-      }
-      scheduleRevision = response.headers.get('X-Schedule-Revision') || response.headers.get('ETag')?.replace(/^W\//, '');
-      for (const [id, saved] of Object.entries(result.slots || {})) {
-        const current = state.slots[id];
-        if (current && current.status === saved.status && current.substituteTeacher === saved.substituteTeacher && current.substituteSelectedBy === saved.substituteSelectedBy) {
-          current.substitutionRecordedBy = saved.substitutionRecordedBy;
-          current.substitutionRecordedAt = saved.substitutionRecordedAt;
-        }
-      }
-      persistenceError = false;
-    } catch (error) {
-      persistenceError = true;
-      persistenceMessage = error.message || 'Alterações ainda não salvas.';
-    }
-    renderApp();
-  });
-  return saveQueue;
+function saveState() {
+ if(!canEditSchedule()){showToast('Seu perfil permite apenas consulta.');return;}
+ if(!persistenceReady||!authState.authenticated)return;
+ const snapshot=cloneRecords({teachers:state.teachers,slots:state.slots});
+ saveQueue=saveQueue.then(async()=>{try{
+  if(!authState.authenticated||persistenceConflict)return;
+  const operations=buildRecordOperations(persistenceBase,snapshot);if(!operations.length)return;
+  const response=await fetch('/.netlify/functions/schedule',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({operations})});
+  const result=await response.json().catch(()=>({}));if(!response.ok){if(response.status===409||response.status===428)persistenceConflict=true;reportClientEvent('SAVE_REJECTED','schedule',response.status);throw new Error(result.error||'Não foi possível salvar.');}
+  mergeSavedRecords(snapshot,result.records||[]);persistenceError=false;
+ }catch(error){persistenceError=true;persistenceMessage=error.message||'Alterações ainda não salvas.';reportClientEvent('SAVE_NETWORK','schedule');}renderApp();});return saveQueue;
 }
 function downloadUnsavedChanges() {
   const blob = new Blob([JSON.stringify({ teachers: state.teachers, slots: state.slots }, null, 2)], { type: 'application/json' });
@@ -272,22 +255,28 @@ async function reloadLatestSchedule() {
   if (persistenceError && !window.confirm('As alterações locais ainda não salvas serão descartadas. Baixe uma cópia local antes de continuar. Carregar a grade atual?')) return;
   await initializeApp();
 }
+let scheduleLoadSequence=0;
 async function initializeApp() {
   if (!authState.authenticated) return;
+  const loadSequence=++scheduleLoadSequence,loadDate=state.selectedDate;persistenceReady=false;
   document.getElementById('app').innerHTML = '<p class="p-8 text-center">Carregando grade…</p>';
   try {
-    const response = await fetch('/.netlify/functions/schedule', { cache: 'no-store' });
+    const response = await fetch('/.netlify/functions/schedule?date='+encodeURIComponent(loadDate), { cache: 'no-store' });
     if (response.status === 401) return;
     if (!response.ok) throw new Error('load');
     const data = await response.json();
+    if (loadSequence !== scheduleLoadSequence || loadDate !== state.selectedDate || !authState.authenticated) return;
     scheduleRevision = response.headers.get('X-Schedule-Revision') || response.headers.get('ETag')?.replace(/^W\//, '');
     persistenceError = false;persistenceConflict = false;
     state.teachers = data.teachers || { titulares: [], substitutos: [] };
     state.slots = data.slots || {};
     initDefaultSlots();
+    persistenceBase=cloneRecords({teachers:state.teachers,slots:state.slots,teacherRecords:data.teacherRecords||[]});
     persistenceReady = true;
     renderApp();
+    checkOperationalHealth();
   } catch {
+    if (loadSequence !== scheduleLoadSequence || !authState.authenticated) return;
     document.getElementById('app').innerHTML = `<div class="p-8 text-center"><p>Não foi possível carregar a grade. Verifique sua conexão.</p><button class="mt-4 underline" data-on-click="${registerUIHandler(function (event) {initializeApp();})}">Tentar novamente</button></div>`;
     applyAccessToUI(document);
   bindUIHandlers(document);
@@ -457,6 +446,7 @@ function attemptAssignSubstitute(slotId, substituteName, force = false, responsi
 }
 
 function navigateToSlot(day, shift, className, slotId) {
+  state.selectedDate=dateForSchoolDay(state.selectedDate,day);
   state.selectedDay = day;
   state.selectedShift = shift;
   state.selectedClass = className;
@@ -675,7 +665,7 @@ function exportPDF() {
   try {
     const list = reportSlots();
     const pdf = new window.jspdf.jsPDF({ orientation: 'landscape' });
-    const period = state.reportPeriod === 'week' ? 'Semana toda (segunda a sexta)' : state.reportDay;
+    const period = state.reportPeriod === 'week' ? formatSchoolDate(schoolMonday(state.selectedDate))+' a '+formatSchoolDate(addSchoolDays(schoolMonday(state.selectedDate),4)) : formatSchoolDate(dateForSchoolDay(state.selectedDate,state.reportDay));
     const assigned = list.filter((s) => s.status === 'substituido' && s.substituteTeacher).length;
     pdf.setFontSize(18);
     pdf.text('EduScale | Substituições de aulas', 14, 18);
@@ -687,7 +677,7 @@ function exportPDF() {
       pdf.autoTable({
         startY: 46,
         head: [['Dia', 'Turno', 'Turma', 'Aula / Horário', 'Professor titular', 'Professor substituto']],
-        body: list.map((s) => [s.day, s.shift, formatClassName(s.className),
+        body: list.map((s) => [formatSchoolDate(s.date)+' · '+s.day+(s.source==='test_legacy_reviewed'?' (teste)':''), s.shift, formatClassName(s.className),
         `${s.slotLabel}\n${s.timeRange}`, s.regularTeacher || 'Sem titular',
         s.status === 'substituido' && s.substituteTeacher ? s.substituteTeacher : 'A definir']),
         styles: { fontSize: 10, cellPadding: 3, overflow: 'linebreak' },
@@ -741,14 +731,14 @@ function renderReportPage() {
             <section aria-label="Substituições no período" class="grid grid-cols-1 lg:grid-cols-2 gap-3">
               ${list.length ? list.map((slot) => `
                 <article class="min-w-0 p-4 bg-[#F5F5F7] rounded-2xl space-y-2 text-sm [overflow-wrap:anywhere]">
-                  <h3 class="font-semibold">${esc(slot.day)} · ${esc(slot.shift)} · ${esc(formatClassName(slot.className))}</h3>
+                  <h3 class="font-semibold">${esc(formatSchoolDate(slot.date))} · ${esc(slot.day)} · ${esc(slot.shift)} · ${esc(formatClassName(slot.className))}</h3>
                   <p class="text-[#6E6E73]">${esc(slot.slotLabel)} · ${esc(slot.timeRange)}</p>
-                  <p><span class="font-semibold">Titular:</span> ${esc(slot.regularTeacher || 'Sem titular')}</p>
+                  ${slot.source==='test_legacy_reviewed'?'<p class="text-xs text-[#86868B]">Teste antigo revisado</p>':''}<p><span class="font-semibold">Titular:</span> ${esc(slot.regularTeacher || 'Sem titular')}</p>
                   <p><span class="font-semibold">Substituto:</span> ${esc(slot.status === 'substituido' && slot.substituteTeacher ? slot.substituteTeacher : 'A definir')}</p>
                   ${slot.status === 'substituido' ? `<p><span class="font-semibold">Quem selecionou:</span> ${esc(slot.substituteSelectedBy || 'Não informado')}</p>` : ''}
                 </article>`).join('') : '<p class="text-sm text-[#6E6E73] lg:col-span-2">Nenhuma falta ou substituição registrada neste período.</p>'}
             </section>
-            <p class="text-xs text-[#86868B]">Usa a grade semanal atual. O PDF é baixado no aparelho conforme as configurações do navegador.</p>
+            <p class="text-xs text-[#86868B]">Ocorrências da semana de ${formatSchoolDate(schoolMonday(state.selectedDate))}. Mude a data das aulas para consultar outra semana.</p>
             <button data-on-click="${registerUIHandler(function (event) {exportPDF();})}" class="w-full touch-target py-3 bg-[#0071E3] text-white text-sm font-semibold rounded-xl">Baixar PDF</button>
           </section>
         </main>`;
@@ -774,16 +764,18 @@ function renderApp() {
   uiHandlers.clear();
   root.innerHTML = `
         ${persistenceError ? `<div role="alert" class="bg-red-50 text-red-700 p-3 text-center text-sm">${allocationEscape(persistenceMessage)} <button data-edit-only class="underline font-semibold" data-on-click="${registerUIHandler(function (event) {saveState();})}">Tentar salvar novamente</button><button class="underline font-semibold ml-3" data-on-click="${registerUIHandler(function (event) {reloadLatestSchedule();})}">Carregar versão atual</button><button class="underline font-semibold ml-3" data-on-click="${registerUIHandler(function (event) {downloadUnsavedChanges();})}">Baixar cópia local</button></div>` : ''}
-        <!-- Top App Bar Apple HIG com Botão PWA e Busca Global -->
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3"><label for="schoolDate" class="text-sm font-semibold">Data das aulas</label><input id="schoolDate" type="date" value="${allocationEscape(state.selectedDate)}" data-on-change="${registerUIHandler(function(){changeSchoolDate(this.value);})}" class="touch-target border border-[#D2D2D7] rounded-xl px-3 text-sm bg-white"><span class="text-xs text-[#6E6E73]">Faltas e substituições são específicas de cada data.</span></div>
+<!-- Top App Bar Apple HIG com Botão PWA e Busca Global -->
         <header class="sticky top-0 z-40 bg-white/85 ios-blur border-b border-[#E5E5EA] px-4 sm:px-6 lg:px-8 py-3 transition-all">
           <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
 
             <div class="flex items-center justify-end gap-2 self-end md:order-last">
-            ${canManageUsers() ? `<button data-on-click="${registerUIHandler(function () {openUserManagement();})}" class="touch-target px-3 text-sm font-semibold text-[#0071E3] rounded-xl hover:bg-black/5">Gerenciar usuários</button>` : ''}
+            ${canManageUsers() ? `<button data-on-click="${registerUIHandler(function(){openOperations();})}" class="touch-target px-3 text-sm text-[#0071E3]">Operação</button><button data-on-click="${registerUIHandler(function () {openUserManagement();})}" class="touch-target px-3 text-sm font-semibold text-[#0071E3] rounded-xl hover:bg-black/5">Gerenciar usuários</button>` : ''}
             ${!canEditSchedule() ? '<span class="text-xs text-[#6E6E73] px-2">Somente consulta</span>' : ''}
             <button data-on-click="${registerUIHandler(function (event) {openAccount();})}" class="touch-target px-3 text-sm text-[#0071E3] rounded-xl hover:bg-black/5 self-end">Minha conta</button>
             <button data-on-click="${registerUIHandler(function (event) {authLogout(this);})}" class="touch-target px-3 text-sm text-[#6E6E73] rounded-xl hover:bg-black/5 self-end md:order-last">Sair</button>
             </div>
+            <span id="connectionState" class="text-xs text-[#6E6E73]">${operationalHealth.ok===null?'Aguardando verificação':operationalHealth.ok===false?'Sem conexão com o serviço':'Serviço disponível'}</span>
             <!-- Zona de Marca EduScale -->
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
@@ -881,7 +873,7 @@ function renderApp() {
         </header>
 
         <!-- Corpo Principal -->
-        ${userManagementState.open && canManageUsers() ? renderUserManagementPage() : state.isReportModalOpen ? renderReportPage() : state.isManagementModalOpen ? renderTeacherManagementPage() : state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
+        ${operationsState.open && canManageUsers() ? renderOperationsPage() : userManagementState.open && canManageUsers() ? renderUserManagementPage() : state.isReportModalOpen ? renderReportPage() : state.isManagementModalOpen ? renderTeacherManagementPage() : state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16 space-y-6">
 
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -898,7 +890,7 @@ function renderApp() {
     const dayVagas = Object.values(state.slots).filter((s) => s.day === day && s.status === 'falta').length;
     const isActive = state.selectedDay === day;
     return `
-                    <button data-on-click="${registerUIHandler(function (event) {state.selectedDay = day;renderApp();})}"
+                    <button data-on-click="${registerUIHandler(function (event) {selectSchoolDay(day);})}"
                       class="flex-1 min-w-[85px] py-2 px-3 text-xs sm:text-sm font-medium rounded-xl transition-all touch-target flex items-center justify-center gap-1.5 ${
     isActive ? 'bg-white text-[#1D1D1F] shadow-[0_2px_8px_rgba(0,0,0,0.12)] font-semibold' : 'text-[#8E8E93] hover:text-[#1D1D1F]'}">
                       <span class="hidden sm:inline">${
@@ -1254,6 +1246,7 @@ function renderClassSlotCard(slot) {
                     </div>
                     <p class="text-xs text-[#86868B] line-through mt-0.5">Titular ausente: Prof. ${allocationEscape(slot.regularTeacher)}</p>
                     <p class="text-xs text-[#86868B] mt-1">Quem selecionou o substituto? ${allocationEscape(slot.substituteSelectedBy || 'Não informado')}</p>
+                    ${slot.source==='test_legacy_reviewed' ? '<p class="text-xs text-[#86868B]">Teste antigo revisado</p>' : ''}
                     ${slot.substitutionRecordedBy ? `<p class="text-xs text-[#86868B] mt-1">Registrado por: ${allocationEscape(slot.substitutionRecordedBy)}</p>` : ''}
                   ` : ''}
                 </div>

@@ -32,6 +32,7 @@ function showLogin(configurationPending = false) {
       <p class="auth-note">Acesso restrito à gestão escolar.</p>
     </div>
   </section>`;
+  const recoveryButton=document.createElement('button'); recoveryButton.type='button'; recoveryButton.className='auth-primary'; recoveryButton.textContent='Recuperar com código de segurança'; recoveryButton.addEventListener('click',()=>showRecovery(false));authRoot.querySelector('.auth-card').append(recoveryButton);
   const form = document.getElementById('auth-form');
   const password = document.getElementById('auth-password');
   if (configurationPending) {

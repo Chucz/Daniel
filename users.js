@@ -7,6 +7,7 @@ function clearUserManagement() {
   userManagementState.editId = null; userManagementState.editDraft = null; userManagementState.createDraft = { name: '', email: '', role: 'consulta' };
 }
 function leaveUserManagementForNavigation() {
+  operationsState.open=false;
   if (!userManagementState.open) return true;
   if (userManagementState.busy) { userManagementState.message = 'Aguarde a operação terminar antes de sair desta tela.'; renderApp(); return false; }
   clearUserManagement(); return true;
@@ -14,6 +15,7 @@ function leaveUserManagementForNavigation() {
 async function usersRequest(method = 'GET', body, query = '') {
   const response = await fetch('/api/users' + query, { method, cache: 'no-store', credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : {}, ...(body ? { body: JSON.stringify(body) } : {}) });
   const result = await response.json().catch(() => ({}));
+  if(response.status===403&&result.code==='REAUTH_REQUIRED'&&body){if(await confirmSensitiveAction())return usersRequest(method,body,query);throw new Error('Operação cancelada. Confirme sua senha para continuar.');}
   if (!response.ok) {
     if (response.status === 401) { clearUserManagement(); showLogin(); }
     if (response.status === 403) await refreshAccess();
@@ -22,6 +24,7 @@ async function usersRequest(method = 'GET', body, query = '') {
   return result;
 }
 async function openUserManagement() {
+  operationsState.open=false;
   if (userManagementState.open) return loadManagedUsers();
   await saveQueue;
   if (!canManageUsers()) return;

@@ -33,5 +33,6 @@ function showPasswordChange(required) {
       form.reset();await openAuthenticatedApp(result.user);
     }catch(e){error.textContent=e.message;}finally{button.disabled=false;}
   });
+  if(!required){const recovery=document.createElement('button');recovery.type='button';recovery.className='auth-primary';recovery.textContent='Códigos de recuperação';recovery.addEventListener('click',()=>showRecovery(true));authRoot.querySelector('.auth-card').append(recovery);}
   document.getElementById('current-password').focus();
 }

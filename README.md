@@ -11,3 +11,5 @@ Configure SUPABASE_DATABASE_URL somente no ambiente das funções do Netlify, us
 A grade usa controle de concorrência: se outra pessoa salvar antes, baixe uma cópia local das alterações pendentes e carregue a versão atual. A autoria das novas gravações é registrada pelo servidor no histórico.
 
 A implementação da área Gerenciar usuários e seus três perfis está documentada em [USER_MANAGEMENT.md](USER_MANAGEMENT.md). A migração db/user-management.sql deve ser aplicada antes de publicar essa versão, após autorização do responsável.
+
+Ocorrências por data, gravação por registro, recuperação e verificação operacional: [OPERATIONAL_CHANGES.md](OPERATIONAL_CHANGES.md). Validação antes de publicar: npm run verify.
