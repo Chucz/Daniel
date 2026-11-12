@@ -19,8 +19,8 @@ function showLogin(configurationPending = false) {
       <p class="auth-subtitle">Entre para organizar os horários<br>e as substituições da sua escola.</p>
       <form id="auth-form">
         <div id="auth-fields">
-          <div class="auth-field"><label for="auth-username">Usuário</label><input id="auth-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="200" placeholder="Seu usuário"></div>
-          <div class="auth-field"><label for="auth-password">Senha</label><div class="auth-input-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" required maxlength="1000" placeholder="Sua senha"><button class="auth-eye" type="button" id="auth-eye" aria-label="Mostrar senha" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+          <div class="auth-field"><label for="auth-username">E-mail</label><input id="auth-username" name="username" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="200" placeholder="Seu e-mail"></div>
+          <div class="auth-field"><label for="auth-password">Senha</label><div class="auth-input-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" required maxlength="128" placeholder="Sua senha"><button class="auth-eye" type="button" id="auth-eye" aria-label="Mostrar senha" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
         </div>
         <label class="auth-remember" for="auth-remember"><input id="auth-remember" name="rememberMe" type="checkbox"> Permanecer conectado</label>
         <p id="auth-error" class="auth-error" role="alert" aria-live="polite"></p>
@@ -66,7 +66,8 @@ function showLogin(configurationPending = false) {
         return;
       }
       password.value = '';
-      await openAuthenticatedApp();
+      const result = await response.json();
+      await openAuthenticatedApp(result.user);
     } catch {
       error.textContent = 'Não foi possível conectar. Verifique sua conexão e tente novamente.';
     } finally {
@@ -76,19 +77,21 @@ function showLogin(configurationPending = false) {
     }
   };
 }
-async function openAuthenticatedApp() {
+async function openAuthenticatedApp(user) {
+  authState.user = user;
   authState.authenticated = true;
   authRoot.hidden = true;
   authRoot.innerHTML = '';
   appRoot.hidden = false;
   appRoot.classList.add('app-enter');
+  if (user?.mustChangePassword) return showPasswordChange(true);
   await initializeApp();
 }
 async function checkSession() {
   try {
     const response = await originalFetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
     const data = await response.json();
-    if (response.ok && data.authenticated) return openAuthenticatedApp();
+    if (response.ok && data.authenticated) return openAuthenticatedApp(data.user);
     if (data.code === 'AUTH_NOT_CONFIGURED') return showLogin(true);
     if (response.status !== 401) throw new Error('session');
   } catch {

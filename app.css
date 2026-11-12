@@ -1,0 +1,26 @@
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", -apple-system, system-ui, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-font-smoothing: antialiased;
+      background-color: #F5F5F7;
+      color: #1D1D1F;
+    }
+    .ios-blur {
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .touch-target {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    @keyframes highlightPulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 113, 227, 0.7); }
+      50% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(0, 113, 227, 0); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 113, 227, 0); }
+    }
+    .slot-highlight {
+      animation: highlightPulse 1.2s ease-in-out 2;
+      border-color: #0071E3 !important;
+      ring: 2px solid #0071E3;
+    }

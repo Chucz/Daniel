@@ -1,5 +1,5 @@
-const CACHE_NAME = 'eduscale-pwa-v6';
-const APP_FILES = ['/', '/index.html', '/manifest.json', '/auth.css', '/auth.js', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/icon.png', '/vendor/jspdf.umd.min.js', '/vendor/jspdf.plugin.autotable.min.js'];
+const CACHE_NAME = 'eduscale-pwa-v7-security';
+const APP_FILES = ['/', '/index.html', '/manifest.json', '/auth.css', '/auth.js', '/account.js', '/app.js', '/app.css', '/styles.css', '/vendor/lucide.min.js', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/icon.png', '/vendor/jspdf.umd.min.js', '/vendor/jspdf.plugin.autotable.min.js'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_FILES)).then(() => self.skipWaiting()));

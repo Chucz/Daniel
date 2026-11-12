@@ -2,25 +2,10 @@
 
 Aplicativo de controle de faltas e substituições, publicado no Netlify.
 
-## Banco Supabase
+Instalação: `npm ci`. Build: `npm run build`. Testes: `npm test`. O diretório público é `dist/`; as funções ficam em `netlify/functions`.
 
-Projeto: `tdxlwvjqlgcofqqdlois` (EduScale, São Paulo).
-Painel: https://supabase.com/dashboard/project/tdxlwvjqlgcofqqdlois
+O sistema usa contas individuais com e-mail e senha, cookies HttpOnly e dados compartilhados da escola. A configuração e as instruções de operação, auditoria e recuperação estão em [SECURITY.md](SECURITY.md).
 
-As funções do servidor usam `SUPABASE_DATABASE_URL` quando configurada. Sem essa variável, continuam usando o banco Netlify existente para permitir a transição sem interromper o site. A tela de login e as variáveis `AUTH_USER` e `AUTH_PASSWORD` permanecem iguais.
+Configure SUPABASE_DATABASE_URL somente no ambiente das funções do Netlify, usando o papel eduscale_app do projeto Supabase. O esquema inicial é db/supabase-setup.sql; a evolução de segurança é db/security-hardening.sql. Não reaplique arquivos em um banco já configurado sem conferir as migrações.
 
-O esquema inicial está em `db/supabase-setup.sql`, aplicado ao projeto pelo gerenciamento de migrações do Supabase. Não execute novamente em um banco já configurado. As tabelas têm RLS e não permitem acesso pelas chaves públicas. O papel `eduscale_app` permite somente as operações usadas pelo servidor.
-
-### Ativação no Netlify
-
-1. Se existem grades no banco Netlify, exporte e importe a tabela `schedules` preservando os IDs antes da troca. Não é necessário transferir sessões: os usuários entrarão novamente. Não exclua o banco antigo durante a transição.
-2. No SQL Editor do Supabase, habilite o login do papel com uma senha forte e exclusiva: `ALTER ROLE eduscale_app LOGIN PASSWORD 'SUA_SENHA_FORTE';`. Faça isso diretamente no painel, sem salvar a senha em arquivos SQL ou no GitHub.
-3. No painel **Connect**, copie a URI de **Transaction pooler**. Use `eduscale_app.tdxlwvjqlgcofqqdlois` como usuário, sua senha codificada para URL, o host mostrado no painel e a porta `6543`.
-4. No Netlify, configure `SUPABASE_DATABASE_URL` como variável secreta disponível para **Functions** no ambiente de produção. Não use variáveis públicas. Mantenha `AUTH_USER` e `AUTH_PASSWORD`.
-5. Faça um novo deploy. Entre, salve uma alteração na grade e recarregue para conferir a persistência no Supabase. Todos os dispositivos autenticados usam os mesmos cadastros e a mesma grade da escola, com um ID fixo definido no servidor. O antigo cookie `eduscale_schedule` não é usado para escolher os dados.
-
-Atualize a página para carregar alterações feitas em outro dispositivo. Como o salvamento envia a grade completa, evite editar em dois dispositivos ao mesmo tempo: o último salvamento prevalece.
-
-O driver usa TLS e uma conexão por instância. Prepared statements estão desativados para compatibilidade com o Transaction pooler.
-
-Documentação: https://supabase.com/docs/guides/database/drizzle
+A grade usa controle de concorrência: se outra pessoa salvar antes, baixe uma cópia local das alterações pendentes e carregue a versão atual. A autoria das novas gravações é registrada pelo servidor no histórico.
