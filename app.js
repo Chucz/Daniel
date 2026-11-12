@@ -246,7 +246,7 @@ function saveState() {
         if (response.status === 409 || response.status === 428) persistenceConflict = true;
         throw new Error(result.error || 'Não foi possível salvar. Tente novamente.');
       }
-      scheduleRevision = response.headers.get('ETag');
+      scheduleRevision = response.headers.get('X-Schedule-Revision') || response.headers.get('ETag')?.replace(/^W\//, '');
       for (const [id, saved] of Object.entries(result.slots || {})) {
         const current = state.slots[id];
         if (current && current.status === saved.status && current.substituteTeacher === saved.substituteTeacher && current.substituteSelectedBy === saved.substituteSelectedBy) {
@@ -280,7 +280,7 @@ async function initializeApp() {
     if (response.status === 401) return;
     if (!response.ok) throw new Error('load');
     const data = await response.json();
-    scheduleRevision = response.headers.get('ETag');
+    scheduleRevision = response.headers.get('X-Schedule-Revision') || response.headers.get('ETag')?.replace(/^W\//, '');
     persistenceError = false;persistenceConflict = false;
     state.teachers = data.teachers || { titulares: [], substitutos: [] };
     state.slots = data.slots || {};
