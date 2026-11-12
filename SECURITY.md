@@ -8,7 +8,7 @@ O Netlify executa `npm run build` e publica apenas `dist/`. As funções permane
 
 As contas estão em `public.app_users`. Senhas usam scrypt com salt aleatório; o servidor só armazena hashes. O login usa e-mail. `must_change_password=true` obriga definir uma nova senha antes de acessar a grade. A senha compartilhada antiga (`AUTH_USER`/`AUTH_PASSWORD`) deixou de ser aceita pelo servidor. As variáveis antigas podem ser removidas nas configurações do Netlify; nunca publique seus valores.
 
-Novas contas devem ser provisionadas pelo administrador com nome, e-mail e função, hash gerado pelo mesmo `hashPassword` do servidor, `active=true` e troca obrigatória. Não existe cadastro público de usuários. A conta inicial foi provisionada para o administrador indicado pelo responsável pela escola. Nunca coloque senhas temporárias em SQL versionado, commits ou relatórios públicos.
+Após aplicar a migração de gerenciamento, novas contas são provisionadas na área Gerenciar usuários, restrita a administradores. O servidor gera a senha temporária, usa o mesmo hashPassword e exige a troca no primeiro acesso. Veja USER_MANAGEMENT.md para perfis, proteção da conta principal e implantação. Não existe cadastro público de usuários. A conta inicial foi provisionada para o administrador indicado pelo responsável pela escola. Nunca coloque senhas temporárias em SQL versionado, commits ou relatórios públicos.
 
 A troca de senha revoga as outras sessões. Para revogar uma conta, configure `active=false` no banco. Sessões antigas do login compartilhado não têm user_id e são rejeitadas. A opção de permanecer conectado dura até sete dias; sessões normais duram oito horas.
 

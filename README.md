@@ -9,3 +9,5 @@ O sistema usa contas individuais com e-mail e senha, cookies HttpOnly e dados co
 Configure SUPABASE_DATABASE_URL somente no ambiente das funções do Netlify, usando o papel eduscale_app do projeto Supabase. O esquema inicial é db/supabase-setup.sql; a evolução de segurança é db/security-hardening.sql. Não reaplique arquivos em um banco já configurado sem conferir as migrações.
 
 A grade usa controle de concorrência: se outra pessoa salvar antes, baixe uma cópia local das alterações pendentes e carregue a versão atual. A autoria das novas gravações é registrada pelo servidor no histórico.
+
+A implementação da área Gerenciar usuários e seus três perfis está documentada em [USER_MANAGEMENT.md](USER_MANAGEMENT.md). A migração db/user-management.sql deve ser aplicada antes de publicar essa versão, após autorização do responsável.

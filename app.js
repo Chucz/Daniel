@@ -232,7 +232,7 @@ function initDefaultSlots() {
   });
 }
 
-function saveState() {
+function saveState() {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!persistenceReady || !authState.authenticated) return;
   const snapshot = JSON.parse(JSON.stringify({ teachers: state.teachers, slots: state.slots }));
   saveQueue = saveQueue.then(async () => {
@@ -289,7 +289,8 @@ async function initializeApp() {
     renderApp();
   } catch {
     document.getElementById('app').innerHTML = `<div class="p-8 text-center"><p>Não foi possível carregar a grade. Verifique sua conexão.</p><button class="mt-4 underline" data-on-click="${registerUIHandler(function (event) {initializeApp();})}">Tentar novamente</button></div>`;
-    bindUIHandlers(document);
+    applyAccessToUI(document);
+  bindUIHandlers(document);
   }
 }
 
@@ -309,7 +310,7 @@ function showToast(message) {
 // ==========================================
 let titularReturnScroll = 0;
 let titularDraft = '';
-function openAssignTitularPage(slotId) {
+function openAssignTitularPage(slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!state.slots[slotId]) return;
   titularReturnScroll = window.scrollY;
   titularDraft = state.slots[slotId].regularTeacher || '';
@@ -326,7 +327,7 @@ function closeAssignTitularPage() {
   window.scrollTo(0, titularReturnScroll);
 }
 
-function saveTitularToSlot(slotId, teacherName) {
+function saveTitularToSlot(slotId, teacherName) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!state.slots[slotId]) return;
   const cleanName = teacherName.trim();
   if (!cleanName) return;
@@ -346,12 +347,12 @@ function saveTitularToSlot(slotId, teacherName) {
   showToast(`Prof. ${cleanName} atribuído(a) ao horário!`);
 }
 
-function confirmRemoveTitularFromSlot(slotId) {
+function confirmRemoveTitularFromSlot(slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   state.removeTitularConfirmSlotId = slotId;
   renderApp();
 }
 
-function executeRemoveTitularFromSlot(slotId) {
+function executeRemoveTitularFromSlot(slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!state.slots[slotId]) return;
   state.slots[slotId].regularTeacher = '';
   state.slots[slotId].status = 'regular';
@@ -392,7 +393,7 @@ function checkScheduleConflict(substituteName, targetSlotId) {
 // ==========================================
 // 6. AÇÕES DE FALTAS E SUBSTITUIÇÕES
 // ==========================================
-function registerFalta(slotId) {
+function registerFalta(slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!state.slots[slotId]) return;
   state.slots[slotId].status = 'falta';
   state.slots[slotId].substituteTeacher = null;
@@ -402,7 +403,7 @@ function registerFalta(slotId) {
   showToast('Falta registrada. Aula marcada como vaga.');
 }
 
-function undoFalta(slotId) {
+function undoFalta(slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!state.slots[slotId]) return;
   state.slots[slotId].status = 'regular';
   state.slots[slotId].substituteTeacher = null;
@@ -412,7 +413,7 @@ function undoFalta(slotId) {
   showToast('Falta desfeita. Professor titular restaurado.');
 }
 
-function removeSubstitute(slotId) {
+function removeSubstitute(slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!state.slots[slotId]) return;
   state.slots[slotId].status = 'falta';
   state.slots[slotId].substituteTeacher = null;
@@ -422,7 +423,7 @@ function removeSubstitute(slotId) {
   showToast('Substituto removido. Aula permanece vaga.');
 }
 
-function attemptAssignSubstitute(slotId, substituteName, force = false, responsibleRole = allocationResponsibleRole) {
+function attemptAssignSubstitute(slotId, substituteName, force = false, responsibleRole = allocationResponsibleRole) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (!state.slots[slotId]) return false;
   if (!SUBSTITUTE_RESPONSIBLE_ROLES.includes(responsibleRole)) {
     showToast('Selecione o responsável pela escolha do substituto.');
@@ -604,6 +605,7 @@ function updateSearchDropdown() {
         `;
   }
 
+  applyAccessToUI(document);
   bindUIHandlers(document);
   lucide.createIcons();
 }
@@ -632,6 +634,7 @@ function syncReportRoute() {
 }
 state.isReportModalOpen = location.hash === reportRoute;
 function openReportModal() {
+  if (!leaveUserManagementForNavigation()) return;
   if (!state.isReportModalOpen) {
     reportReturnHash = location.hash;
     reportReturnScroll = window.scrollY;
@@ -770,12 +773,14 @@ function renderApp() {
 
   uiHandlers.clear();
   root.innerHTML = `
-        ${persistenceError ? `<div role="alert" class="bg-red-50 text-red-700 p-3 text-center text-sm">${allocationEscape(persistenceMessage)} <button class="underline font-semibold" data-on-click="${registerUIHandler(function (event) {saveState();})}">Tentar salvar novamente</button><button class="underline font-semibold ml-3" data-on-click="${registerUIHandler(function (event) {reloadLatestSchedule();})}">Carregar versão atual</button><button class="underline font-semibold ml-3" data-on-click="${registerUIHandler(function (event) {downloadUnsavedChanges();})}">Baixar cópia local</button></div>` : ''}
+        ${persistenceError ? `<div role="alert" class="bg-red-50 text-red-700 p-3 text-center text-sm">${allocationEscape(persistenceMessage)} <button data-edit-only class="underline font-semibold" data-on-click="${registerUIHandler(function (event) {saveState();})}">Tentar salvar novamente</button><button class="underline font-semibold ml-3" data-on-click="${registerUIHandler(function (event) {reloadLatestSchedule();})}">Carregar versão atual</button><button class="underline font-semibold ml-3" data-on-click="${registerUIHandler(function (event) {downloadUnsavedChanges();})}">Baixar cópia local</button></div>` : ''}
         <!-- Top App Bar Apple HIG com Botão PWA e Busca Global -->
         <header class="sticky top-0 z-40 bg-white/85 ios-blur border-b border-[#E5E5EA] px-4 sm:px-6 lg:px-8 py-3 transition-all">
           <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
 
             <div class="flex items-center justify-end gap-2 self-end md:order-last">
+            ${canManageUsers() ? `<button data-on-click="${registerUIHandler(function () {openUserManagement();})}" class="touch-target px-3 text-sm font-semibold text-[#0071E3] rounded-xl hover:bg-black/5">Gerenciar usuários</button>` : ''}
+            ${!canEditSchedule() ? '<span class="text-xs text-[#6E6E73] px-2">Somente consulta</span>' : ''}
             <button data-on-click="${registerUIHandler(function (event) {openAccount();})}" class="touch-target px-3 text-sm text-[#0071E3] rounded-xl hover:bg-black/5 self-end">Minha conta</button>
             <button data-on-click="${registerUIHandler(function (event) {authLogout(this);})}" class="touch-target px-3 text-sm text-[#6E6E73] rounded-xl hover:bg-black/5 self-end md:order-last">Sair</button>
             </div>
@@ -876,12 +881,12 @@ function renderApp() {
         </header>
 
         <!-- Corpo Principal -->
-        ${state.isReportModalOpen ? renderReportPage() : state.isManagementModalOpen ? renderTeacherManagementPage() : state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
+        ${userManagementState.open && canManageUsers() ? renderUserManagementPage() : state.isReportModalOpen ? renderReportPage() : state.isManagementModalOpen ? renderTeacherManagementPage() : state.assignTitularPageSlotId ? renderAssignTitularPage() : state.activeBottomSheetSlotId && !state.conflictAlert ? renderBottomSheet() : `
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-16 space-y-6">
 
           <div class="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 class="text-lg font-semibold tracking-tight">Alocação de substitutos</h2><p class="text-xs text-[#6E6E73]">Escolha uma aula vaga e confirme o professor responsável.</p></div>
-          <button data-allocation-trigger data-on-click="${registerUIHandler(function (event) {openBottomSheet();})}" class="touch-target px-4 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-sm font-semibold flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>Alocar Substituto</button>
+          <div><h2 class="text-lg font-semibold tracking-tight">Alocação de substitutos</h2><p class="text-xs text-[#6E6E73]">${canEditSchedule() ? 'Escolha uma aula vaga e confirme o professor responsável.' : 'Consulte os horários e os responsáveis pelas substituições.'}</p></div>
+          <button data-edit-only data-allocation-trigger data-on-click="${registerUIHandler(function (event) {openBottomSheet();})}" class="touch-target px-4 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-sm font-semibold flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>Alocar Substituto</button>
         </div>
         <!-- Controles Segmentados Estilo iOS -->
           <div class="space-y-3.5">
@@ -1044,7 +1049,7 @@ function renderApp() {
                 <div class="flex items-center justify-between">
                   <div>
                     <h3 class="text-sm font-semibold text-[#1D1D1F] tracking-tight">Professores Substitutos</h3>
-                    <p class="text-xs text-[#86868B]">Arraste para aula vaga ou clique para rastrear</p>
+                    <p class="text-xs text-[#86868B]">${canEditSchedule() ? 'Arraste para aula vaga ou clique para rastrear' : 'Clique para consultar as aulas deste professor'}</p>
                   </div>
                   <span class="text-xs bg-[#F5F5F7] text-[#6E6E73] font-semibold px-2.5 py-1 rounded-full border border-[#E5E5EA]">
                     ${subsList.length}
@@ -1075,7 +1080,7 @@ function renderApp() {
 
     return `
                         <div
-                          draggable="true"
+                          draggable="${canEditSchedule() ? 'true' : 'false'}"
                           data-on-dragstart="${registerUIHandler(function (event) {handleDragStart(event, name);})}"
                           class="group p-3 bg-[#F5F5F7] hover:bg-[#EBF3FF] border border-transparent hover:border-[#BFDBFE] rounded-2xl flex items-center justify-between cursor-grab active:cursor-grabbing transition-all select-none">
                           <div class="flex items-center gap-3">
@@ -1107,8 +1112,8 @@ function renderApp() {
 
                 <!-- Formulário Rápido de Adição -->
                 <div class="pt-3 border-t border-[#E5E5EA] flex items-center gap-2">
-                  <input type="text" id="quickAddSubInput" placeholder="Novo substituto..." class="flex-1 text-xs bg-[#F5F5F7] border border-[#E5E5EA] rounded-xl px-3 py-2 outline-none focus:border-[#0071E3] focus:bg-white transition-all placeholder:text-[#8E8E93]" />
-                  <button data-on-click="${registerUIHandler(function (event) {addQuickSubstituto();})}" class="px-3 py-2 bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium rounded-xl transition-all active:scale-[0.97]">
+                  <input type="text" data-edit-only id="quickAddSubInput" placeholder="Novo substituto..." class="flex-1 text-xs bg-[#F5F5F7] border border-[#E5E5EA] rounded-xl px-3 py-2 outline-none focus:border-[#0071E3] focus:bg-white transition-all placeholder:text-[#8E8E93]" />
+                  <button data-edit-only data-on-click="${registerUIHandler(function (event) {addQuickSubstituto();})}" class="px-3 py-2 bg-[#1D1D1F] hover:bg-black text-white text-xs font-medium rounded-xl transition-all active:scale-[0.97]">
                     Adicionar
                   </button>
                 </div>
@@ -1151,6 +1156,7 @@ function renderApp() {
         ` : ''}
       `;
 
+  applyAccessToUI(document);
   bindUIHandlers(document);
   lucide.createIcons();
 
@@ -1234,7 +1240,7 @@ function renderClassSlotCard(slot) {
                     <div class="text-base sm:text-lg font-bold text-red-600 tracking-tight flex items-center gap-2">
                       <span>AULA EM ABERTO / VAGO</span>
                     </div>
-                    <p class="text-xs text-red-500/90 mt-0.5">Toque para alocar substituto ou arraste da lista lateral (Titular: Prof. ${allocationEscape(slot.regularTeacher)})</p>
+                    <p class="text-xs text-red-500/90 mt-0.5">${canEditSchedule() ? 'Toque para alocar substituto ou arraste da lista lateral' : 'Aguardando alocação de substituto'} (Titular: Prof. ${allocationEscape(slot.regularTeacher)})</p>
                   ` : ''}
 
                   <!-- Caso 4: Substituído -->
@@ -1259,7 +1265,7 @@ function renderClassSlotCard(slot) {
 
               <!-- Ação quando não há professor titular fixado -->
               ${!hasTitular && isRegular ? `
-                <button data-on-click="${registerUIHandler(function (event) {openAssignTitularPage(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {openAssignTitularPage(slot.id);})}"
                   class="px-3.5 py-2 text-xs font-semibold text-[#0071E3] bg-[#0071E3]/10 hover:bg-[#0071E3]/20 border border-[#0071E3]/25 rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target shadow-2xs">
                   <i data-lucide="plus" class="w-4 h-4"></i>
                   <span>Atribuir Titular</span>
@@ -1269,21 +1275,21 @@ function renderClassSlotCard(slot) {
               <!-- Ações quando há professor titular regular fixado -->
               ${hasTitular && isRegular ? `
                 <!-- Botão Editar Titular -->
-                <button data-on-click="${registerUIHandler(function (event) {openAssignTitularPage(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {openAssignTitularPage(slot.id);})}"
                   title="Editar ou trocar o professor titular deste horário"
                   class="p-2 text-[#86868B] hover:text-[#0071E3] hover:bg-blue-50 border border-[#E5E5EA] rounded-xl transition-all active:scale-[0.97] touch-target flex items-center justify-center">
                   <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                 </button>
 
                 <!-- Botão Excluir Titular do Bloco (Volta a ser 'Sem professor atribuído') -->
-                <button data-on-click="${registerUIHandler(function (event) {confirmRemoveTitularFromSlot(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {confirmRemoveTitularFromSlot(slot.id);})}"
                   title="Desvincular professor deste horário (deixar sem titular)"
                   class="p-2 text-[#86868B] hover:text-red-600 hover:bg-red-50 border border-[#E5E5EA] rounded-xl transition-all active:scale-[0.97] touch-target flex items-center justify-center">
                   <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                 </button>
 
                 <!-- Botão Registrar Falta -->
-                <button data-on-click="${registerUIHandler(function (event) {registerFalta(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {registerFalta(slot.id);})}"
                   class="px-3.5 py-2 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100/80 border border-red-200/80 rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
                   <i data-lucide="user-x" class="w-4 h-4"></i>
                   <span>Registrar Falta</span>
@@ -1292,13 +1298,13 @@ function renderClassSlotCard(slot) {
 
               <!-- Ações quando está em Falta / Aberto -->
               ${isFalta ? `
-                <button data-on-click="${registerUIHandler(function (event) {openBottomSheet(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {openBottomSheet(slot.id);})}"
                   class="px-3.5 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
                   <i data-lucide="user-plus" class="w-4 h-4"></i>
                   <span>Alocar Substituto</span>
                 </button>
 
-                <button data-on-click="${registerUIHandler(function (event) {undoFalta(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {undoFalta(slot.id);})}"
                   title="Restaurar Titular"
                   class="p-2.5 text-xs font-medium text-[#86868B] hover:text-[#1D1D1F] bg-white border border-[#E5E5EA] hover:bg-[#F5F5F7] rounded-xl transition-all active:scale-[0.97] flex items-center justify-center touch-target">
                   <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
@@ -1307,14 +1313,14 @@ function renderClassSlotCard(slot) {
 
               <!-- Ações quando está Substituído -->
               ${isSubstituido ? `
-                <button data-on-click="${registerUIHandler(function (event) {openBottomSheet(slot.id);})}" class="px-3 py-2 text-xs font-medium text-[#0071E3] bg-white border border-[#E5E5EA] hover:bg-[#F5F5F7] rounded-xl touch-target">Editar substituição</button>
-                <button data-on-click="${registerUIHandler(function (event) {removeSubstitute(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {openBottomSheet(slot.id);})}" class="px-3 py-2 text-xs font-medium text-[#0071E3] bg-white border border-[#E5E5EA] hover:bg-[#F5F5F7] rounded-xl touch-target">Editar substituição</button>
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {removeSubstitute(slot.id);})}"
                   class="px-3 py-2 text-xs font-medium text-[#86868B] hover:text-red-600 bg-white border border-[#E5E5EA] hover:bg-red-50 rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
                   <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                   <span class="hidden sm:inline">Remover Substituto</span>
                 </button>
 
-                <button data-on-click="${registerUIHandler(function (event) {undoFalta(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {undoFalta(slot.id);})}"
                   title="Restaurar Titular Original"
                   class="px-3.5 py-2 text-xs font-medium text-[#1D1D1F] bg-white border border-[#E5E5EA] hover:bg-[#F5F5F7] rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
                   <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-[#0071E3]"></i>
@@ -1357,7 +1363,7 @@ function renderAssignTitularPage() {
             </div>
 
             <!-- Formulário para digitar ou renomear -->
-            <form data-on-submit="${registerUIHandler(function (event) {event.preventDefault();const val = document.getElementById('assignTitularInput').value;saveTitularToSlot(slot.id, val);})}" class="space-y-2">
+            <form data-edit-only data-on-submit="${registerUIHandler(function (event) {event.preventDefault();const val = document.getElementById('assignTitularInput').value;saveTitularToSlot(slot.id, val);})}" class="space-y-2">
               <label for="assignTitularInput" class="text-xs font-semibold text-[#1D1D1F] block">
                 Nome do Professor Titular:
               </label>
@@ -1385,7 +1391,7 @@ function renderAssignTitularPage() {
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                 ${titularesList.map((name) => `
-                  <button data-on-click="${registerUIHandler(function (event) {saveTitularToSlot(slot.id, name);})}"
+                  <button data-edit-only data-on-click="${registerUIHandler(function (event) {saveTitularToSlot(slot.id, name);})}"
                     class="w-full p-2.5 bg-[#F5F5F7] hover:bg-blue-50 border border-transparent hover:border-blue-200 rounded-xl flex items-center justify-between transition-all active:scale-[0.98] text-left touch-target">
                     <div class="min-w-0 flex items-center gap-2.5">
                       <div class="w-7 h-7 rounded-lg bg-white border border-[#E5E5EA] flex items-center justify-center text-xs font-bold text-[#0071E3]">
@@ -1409,7 +1415,7 @@ function renderAssignTitularPage() {
             <!-- Botão de Desvincular se houver professor -->
             ${currentTeacher ? `
               <div class="pt-2 border-t border-[#E5E5EA] flex flex-wrap gap-3 justify-between items-center">
-                <button data-on-click="${registerUIHandler(function (event) {closeAssignTitularPage();confirmRemoveTitularFromSlot(slot.id);})}"
+                <button data-edit-only data-on-click="${registerUIHandler(function (event) {closeAssignTitularPage();confirmRemoveTitularFromSlot(slot.id);})}"
                   class="text-xs text-red-600 hover:text-red-700 font-medium flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-red-50 transition-colors">
                   <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                   <span>Desvincular professor deste horário</span>
@@ -1458,7 +1464,7 @@ function renderRemoveTitularConfirmModal() {
               <button data-on-click="${registerUIHandler(function (event) {state.removeTitularConfirmSlotId = null;renderApp();})}" class="flex-1 py-2.5 px-3 text-xs font-semibold text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E5E5EA] rounded-xl transition-all touch-target">
                 Cancelar
               </button>
-              <button data-on-click="${registerUIHandler(function (event) {executeRemoveTitularFromSlot(slot.id);})}" class="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all shadow-xs touch-target">
+              <button data-edit-only data-on-click="${registerUIHandler(function (event) {executeRemoveTitularFromSlot(slot.id);})}" class="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all shadow-xs touch-target">
                 Confirmar
               </button>
             </div>
@@ -1645,7 +1651,7 @@ function renderConflictModal() {
               <button data-on-click="${registerUIHandler(function (event) {state.conflictAlert = null;renderApp();})}" class="flex-1 py-2.5 px-3 text-xs font-semibold text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E5E5EA] rounded-xl transition-all touch-target">
                 Cancelar Alocação
               </button>
-              <button data-on-click="${registerUIHandler(function (event) {attemptAssignSubstitute(alert.slotId, alert.subName, true);})}" class="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all shadow-xs touch-target">
+              <button data-edit-only data-on-click="${registerUIHandler(function (event) {attemptAssignSubstitute(alert.slotId, alert.subName, true);})}" class="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all shadow-xs touch-target">
                 Forçar Sobreposição
               </button>
             </div>
@@ -1669,7 +1675,7 @@ function allocationSlots() {
   return Object.values(state.slots).filter((slot) => slot.status === 'falta');
 }
 
-function openBottomSheet(slotId, substituteName) {
+function openBottomSheet(slotId, substituteName) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   allocationReturnFocus = document.activeElement?.id;
   const slots = allocationSlots();
   const first = slots.find((slot) => slot.day === state.selectedDay && slot.className === state.selectedClass && slot.shift === state.selectedShift) || slots.find((slot) => slot.day === state.selectedDay) || slots[0];
@@ -1717,7 +1723,7 @@ function renderBottomSheet() {
               <button type="button" data-on-click="${registerUIHandler(function (event) {closeAllocation();})}" class="touch-target self-start sm:self-auto px-4 py-2 rounded-xl bg-[#F5F5F7] text-sm font-semibold flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i>Voltar</button>
             </header>
             <div class="grid md:grid-cols-2">
-              <form data-on-submit="${registerUIHandler(function (event) {event.preventDefault();addAndAssignFromSheet(state.activeBottomSheetSlotId);})}" class="p-5 space-y-4 md:border-r border-[#E5E5EA]">
+              <form data-edit-only data-on-submit="${registerUIHandler(function (event) {event.preventDefault();addAndAssignFromSheet(state.activeBottomSheetSlotId);})}" class="p-5 space-y-4 md:border-r border-[#E5E5EA]">
                 <div class="space-y-2">
                   <label for="allocationLesson" class="block text-sm font-semibold">1. Professor ausente / aula</label>
                   <select id="allocationLesson" ${slots.length ? '' : 'disabled'} data-on-change="${registerUIHandler(function (event) {openBottomSheet(this.value);})}" class="touch-target w-full min-w-0 border border-[#D2D2D7] rounded-xl px-3 text-sm bg-white focus:ring-2 focus:ring-blue-200">
@@ -1762,7 +1768,7 @@ document.addEventListener('keydown', (event) => {
 
 });
 
-function addAndAssignFromSheet(slotId) {
+function addAndAssignFromSheet(slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   const input = document.getElementById('sheetNewSubInput');
   const name = input ? input.value.trim() : '';
   if (!name || !state.slots[slotId] || !['falta', 'substituido'].includes(state.slots[slotId].status)) return;
@@ -1778,7 +1784,7 @@ function addAndAssignFromSheet(slotId) {
   attemptAssignSubstitute(slotId, name);
 }
 
-function addQuickSubstituto() {
+function addQuickSubstituto() {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   const input = document.getElementById('quickAddSubInput');
   const name = input ? input.value.trim() : '';
   if (!name) return;
@@ -1792,7 +1798,7 @@ function addQuickSubstituto() {
   }
 }
 
-function handleDragStart(event, name) {
+function handleDragStart(event, name) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   event.dataTransfer.setData('text/plain', name);
   event.dataTransfer.effectAllowed = 'copy';
 }
@@ -1808,7 +1814,7 @@ function handleDragLeave(event, slotId) {
   if (el) el.classList.remove('ring-2', 'ring-[#0071E3]', 'bg-blue-50/90');
 }
 
-function handleDrop(event, slotId) {
+function handleDrop(event, slotId) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   event.preventDefault();
   handleDragLeave(event, slotId);
   const name = event.dataTransfer.getData('text/plain');
@@ -1845,6 +1851,7 @@ function closeTeacherManagement() {
 let managementFeedback = '';
 
 function openTeacherManagement(tab = managementActiveTab) {
+  if (!leaveUserManagementForNavigation()) return;
   if (!state.isManagementModalOpen || state.isReportModalOpen) {
     managementReturnHash = location.hash;
     managementReturnScroll = window.scrollY;
@@ -1895,8 +1902,8 @@ function renderTeacherManagementPage() {
               </button>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-5 items-start">
-              <form data-on-submit="${registerUIHandler(function (event) {event.preventDefault();addTeacherFromModal(managementActiveTab);})}" class="min-w-0 p-4 bg-[#F5F5F7] rounded-2xl border border-[#E5E5EA] space-y-4">
+            <div class="grid grid-cols-1 ${canEditSchedule() ? 'md:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]' : ''} gap-5 items-start">
+              <form data-edit-only data-on-submit="${registerUIHandler(function (event) {event.preventDefault();addTeacherFromModal(managementActiveTab);})}" class="min-w-0 p-4 bg-[#F5F5F7] rounded-2xl border border-[#E5E5EA] space-y-4">
                 <h4 class="text-sm font-semibold text-[#1D1D1F]">Cadastrar ${managementActiveTab === 'titulares' ? 'professor titular' : 'substituto'}</h4>
                 <div class="space-y-1.5">
                   <label for="modalNewTeacherName" class="block text-xs font-medium">Nome completo <span class="text-[#86868B]">(obrigatório)</span></label>
@@ -1929,7 +1936,7 @@ function renderTeacherManagementPage() {
                         ${phone ? `<div class="text-[10px] text-[#86868B]">${allocationEscape(phone)}</div>` : ''}
                       </div>
                     </div>
-                    <button data-on-click="${registerUIHandler(function (event) {removeTeacherFromModal(idx, managementActiveTab);})}" aria-label="Excluir professor" class="touch-target shrink-0 p-2 text-[#86868B] hover:text-red-600 rounded-xl">
+                    <button data-edit-only data-on-click="${registerUIHandler(function (event) {removeTeacherFromModal(idx, managementActiveTab);})}" aria-label="Excluir professor" class="touch-target shrink-0 p-2 text-[#86868B] hover:text-red-600 rounded-xl">
                       <i data-lucide="trash-2" class="w-4 h-4"></i>
                     </button>
                   </div>
@@ -1950,7 +1957,7 @@ function renderTeacherManagementPage() {
       `;
 }
 
-function removeTeacherFromModal(idx, tab) {
+function removeTeacherFromModal(idx, tab) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   if (tab === 'titulares') {
     state.teachers.titulares.splice(idx, 1);
   } else {
@@ -1960,7 +1967,7 @@ function removeTeacherFromModal(idx, tab) {
   renderApp();
 }
 
-function addTeacherFromModal(tab) {
+function addTeacherFromModal(tab) {if (!canEditSchedule()) {showToast('Seu perfil permite apenas consulta.');return;}
   const nameInput = document.getElementById('modalNewTeacherName');
   const name = nameInput ? nameInput.value.trim() : '';
   if (!name) {

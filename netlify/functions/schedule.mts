@@ -1,6 +1,7 @@
 import { database } from '../lib/database.mjs';
 import { eq, sql } from 'drizzle-orm';
 import { schedules, scheduleAudit } from '../../db/schema.js';
+import { canEditSchedule } from '../lib/access.mjs';
 import { getSessionUser, digest } from '../lib/auth.mjs';
 const SHARED_SCHEDULE_ID = '00000000-0000-4000-8000-000000000001';
 const emptySchedule = () => ({teachers:{titulares:[],substitutos:[]},slots:{}});
@@ -21,6 +22,7 @@ export default async (request: Request) => {
   catch { return respond({error:'Não foi possível verificar a sessão'},503); }
   if(user.mustChangePassword) return respond({error:'Atualize sua senha para continuar.',code:'PASSWORD_CHANGE_REQUIRED'},403);
   if(!['GET','PUT'].includes(request.method)) return respond({error:'Método inválido'},405);
+  if(request.method==='PUT' && !canEditSchedule(user)) return respond({error:'Seu perfil permite apenas consulta.',code:'FORBIDDEN'},403);
   if(request.method==='PUT' && request.headers.get('origin')!==new URL(request.url).origin) return respond({error:'Origem inválida'},403);
   const id=SHARED_SCHEDULE_ID;
   try {

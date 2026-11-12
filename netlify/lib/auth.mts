@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual, scrypt as scryptCallback } fr
 import { promisify } from 'node:util';
 import { database } from './database.mjs';
 import { and, eq, gt, lt } from 'drizzle-orm';
+import { safeUser } from './access.mjs';
 import { authSessions, appUsers } from '../../db/schema.js';
 const scrypt = promisify(scryptCallback);
 export function digest(value: string) { return createHash('sha256').update(value).digest('hex'); }
@@ -30,12 +31,19 @@ export async function getSessionUser(request: Request) {
   return row.user;
 }
 export async function isAuthenticated(request: Request) { return !!await getSessionUser(request); }
-export function publicUser(user: typeof appUsers.$inferSelect) { return { id: user.id, email: user.email, name: user.name, role: user.role, mustChangePassword: user.mustChangePassword }; }
+export function publicUser(user: typeof appUsers.$inferSelect) { return safeUser(user); }
 export async function revokeSession(request: Request) { const token = readToken(request); if (token) await database().delete(authSessions).where(eq(authSessions.tokenHash, digest(token))); }
 export async function createSession(request: Request, user: typeof appUsers.$inferSelect, rememberMe = false) {
-  const db = database(); await revokeSession(request); await db.delete(authSessions).where(lt(authSessions.expiresAt, new Date()));
-  const token = randomBytes(32).toString('hex'); const lifetime = rememberMe && !user.mustChangePassword ? 60*60*24*7 : 60*60*8;
-  await db.insert(authSessions).values({ tokenHash: digest(token), credentialHash: digest(user.passwordHash), userId: user.id, expiresAt: new Date(Date.now()+lifetime*1000) });
-  return sessionCookie(request, token, rememberMe ? lifetime : null);
+  return database().transaction(async (tx: any) => {
+    const [current] = await tx.select().from(appUsers).where(eq(appUsers.id, user.id)).for('share');
+    if (!current || !current.active || current.passwordHash !== user.passwordHash) throw new Error('Access changed during sign-in');
+    const previousToken = readToken(request);
+    if (previousToken) await tx.delete(authSessions).where(eq(authSessions.tokenHash, digest(previousToken)));
+    await tx.delete(authSessions).where(lt(authSessions.expiresAt, new Date()));
+    const token = randomBytes(32).toString('hex');
+    const lifetime = rememberMe && !current.mustChangePassword ? 60*60*24*7 : 60*60*8;
+    await tx.insert(authSessions).values({ tokenHash: digest(token), credentialHash: digest(current.passwordHash), userId: current.id, expiresAt: new Date(Date.now()+lifetime*1000) });
+    return sessionCookie(request, token, rememberMe ? lifetime : null);
+  });
 }
 export function sameOrigin(request: Request) { return request.headers.get('origin') === new URL(request.url).origin; }

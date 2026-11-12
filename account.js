@@ -1,4 +1,5 @@
 async function openAccount() {
+  if (!leaveUserManagementForNavigation()) return;
   await saveQueue;
   if (persistenceError) { showToast('Salve suas alterações ou baixe uma cópia local antes de abrir sua conta.'); return; }
   showPasswordChange(false);

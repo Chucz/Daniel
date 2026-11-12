@@ -5,10 +5,13 @@ const originalFetch = window.fetch.bind(window);
 window.fetch = async (...args) => {
   const response = await originalFetch(...args);
   if (response.status === 401 && String(args[0]).includes('/.netlify/functions/schedule')) showLogin();
+  if (response.status === 403 && String(args[0]).includes('/.netlify/functions/schedule')) await refreshAccess();
   return response;
 };
 function showLogin(configurationPending = false) {
+  clearUserManagement();
   authState.authenticated = false;
+  authState.user = null;
   appRoot.hidden = true;
   appRoot.innerHTML = '';
   authRoot.hidden = false;
@@ -104,6 +107,7 @@ async function checkSession() {
   showLogin();
 }
 async function authLogout(button) {
+  if (!leaveUserManagementForNavigation()) return;
   button.disabled = true;
   button.textContent = 'Saindo…';
   try {
