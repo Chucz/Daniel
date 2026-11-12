@@ -239,7 +239,7 @@ function saveState() {
     try {
       if (!authState.authenticated || persistenceConflict) return;
       const response = await fetch('/.netlify/functions/schedule', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': scheduleRevision || '' }, body: JSON.stringify(snapshot)
+        method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Schedule-Revision': scheduleRevision || '' }, body: JSON.stringify(snapshot)
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {

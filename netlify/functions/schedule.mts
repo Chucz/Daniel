@@ -27,7 +27,7 @@ export default async (request: Request) => {
     const db=database();
     if(request.method==='GET') { const [row]=await db.select().from(schedules).where(eq(schedules.id,id));const data=row?.data||emptySchedule();headers.set('ETag',revision(data));headers.set('X-Schedule-Revision',revision(data));return respond(data); }
     if(!request.headers.get('content-type')?.includes('application/json'))return respond({error:'Formato inválido'},415);
-    const expected=request.headers.get('if-match')?.replace(/^W\//,'');if(!expected || !/^"[a-f0-9]{64}"$/.test(expected))return respond({error:'Atualize a página antes de salvar.',code:'REVISION_REQUIRED'},428);
+    const expected=(request.headers.get('x-schedule-revision') || request.headers.get('if-match'))?.replace(/^W\//,'');if(!expected || !/^"[a-f0-9]{64}"$/.test(expected))return respond({error:'Atualize a página antes de salvar.',code:'REVISION_REQUIRED'},428);
     const raw=await request.text();if(raw.length>1000000)return respond({error:'Grade muito grande'},413);
     let data;try{data=JSON.parse(raw);}catch{return respond({error:'JSON inválido'},400);}
     const text=(v:unknown):v is string=>typeof v==='string'&&v.length<=200&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(v);

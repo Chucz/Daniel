@@ -18,7 +18,7 @@ Dados de professores são codificados antes da renderização. Eventos são call
 
 ## Gravação e recuperação
 
-O GET da grade retorna um ETag. PUT exige If-Match com a revisão lida; a comparação ocorre dentro de uma transação com lock no Postgres. Gravações concorrentes desatualizadas recebem 409; clientes antigos sem revisão recebem 428 e precisam atualizar a página. O navegador oferece download da cópia local ainda não salva antes de carregar a versão atual.
+O GET da grade retorna X-Schedule-Revision e ETag. PUT exige X-Schedule-Revision com a revisão lida (If-Match também é aceito quando encaminhado pela plataforma); a comparação ocorre dentro de uma transação com lock no Postgres. Gravações concorrentes desatualizadas recebem 409; clientes antigos sem revisão recebem 428 e precisam atualizar a página. O navegador oferece download da cópia local ainda não salva antes de carregar a versão atual.
 
 Cada gravação aceita registra antes/depois, usuário autenticado e horário na tabela schedule_audit, na mesma transação. A aplicação não tem privilégios de UPDATE ou DELETE nessa tabela. Uma cópia inicial da grade também foi registrada na ativação. Não é possível reconstruir autoria de alterações anteriores à implantação.
 
