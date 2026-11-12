@@ -268,7 +268,8 @@
                 slotLabel: slot.label, timeRange: slot.time,
                 regularTeacher: saved?.regularTeacher || '',
                 status: saved?.status || 'regular',
-                substituteTeacher: saved?.substituteTeacher || null
+                substituteTeacher: saved?.substituteTeacher || null,
+                substituteSelectedBy: saved?.substituteSelectedBy || null
               };
             });
           });
@@ -359,6 +360,7 @@
       state.slots[slotId].regularTeacher = cleanName;
       state.slots[slotId].status = 'regular';
       state.slots[slotId].substituteTeacher = null;
+      state.slots[slotId].substituteSelectedBy = null;
       closeAssignTitularPage();
       saveState();
       renderApp();
@@ -375,6 +377,7 @@
       state.slots[slotId].regularTeacher = '';
       state.slots[slotId].status = 'regular';
       state.slots[slotId].substituteTeacher = null;
+      state.slots[slotId].substituteSelectedBy = null;
       state.removeTitularConfirmSlotId = null;
       saveState();
       renderApp();
@@ -414,6 +417,7 @@
       if (!state.slots[slotId]) return;
       state.slots[slotId].status = 'falta';
       state.slots[slotId].substituteTeacher = null;
+      state.slots[slotId].substituteSelectedBy = null;
       saveState();
       renderApp();
       showToast('Falta registrada. Aula marcada como vaga.');
@@ -423,6 +427,7 @@
       if (!state.slots[slotId]) return;
       state.slots[slotId].status = 'regular';
       state.slots[slotId].substituteTeacher = null;
+      state.slots[slotId].substituteSelectedBy = null;
       saveState();
       renderApp();
       showToast('Falta desfeita. Professor titular restaurado.');
@@ -432,12 +437,19 @@
       if (!state.slots[slotId]) return;
       state.slots[slotId].status = 'falta';
       state.slots[slotId].substituteTeacher = null;
+      state.slots[slotId].substituteSelectedBy = null;
       saveState();
       renderApp();
       showToast('Substituto removido. Aula permanece vaga.');
     }
 
-    function attemptAssignSubstitute(slotId, substituteName, force = false) {
+    function attemptAssignSubstitute(slotId, substituteName, force = false, responsibleRole = allocationResponsibleRole) {
+      if (!state.slots[slotId]) return false;
+      if (!SUBSTITUTE_RESPONSIBLE_ROLES.includes(responsibleRole)) {
+        showToast('Selecione o responsável pela escolha do substituto.');
+        document.getElementById('allocationResponsible')?.focus();
+        return false;
+      }
       const conflict = checkScheduleConflict(substituteName, slotId);
       if (conflict && !force) {
         state.conflictAlert = {
@@ -451,6 +463,7 @@
 
       state.slots[slotId].status = 'substituido';
       state.slots[slotId].substituteTeacher = substituteName;
+      state.slots[slotId].substituteSelectedBy = responsibleRole;
       state.activeBottomSheetSlotId = null;
       state.conflictAlert = null;
       const saving = saveState();
@@ -749,6 +762,7 @@
                   <p class="text-[#6E6E73]">${esc(slot.slotLabel)} · ${esc(slot.timeRange)}</p>
                   <p><span class="font-semibold">Titular:</span> ${esc(slot.regularTeacher || 'Sem titular')}</p>
                   <p><span class="font-semibold">Substituto:</span> ${esc(slot.status === 'substituido' && slot.substituteTeacher ? slot.substituteTeacher : 'A definir')}</p>
+                  ${slot.status === 'substituido' ? `<p><span class="font-semibold">Quem selecionou:</span> ${esc(slot.substituteSelectedBy || 'Não informado')}</p>` : ''}
                 </article>`).join('') : '<p class="text-sm text-[#6E6E73] lg:col-span-2">Nenhuma falta ou substituição registrada neste período.</p>'}
             </section>
             <p class="text-xs text-[#86868B]">Usa a grade semanal atual. O PDF é baixado no aparelho conforme as configurações do navegador.</p>
@@ -1248,13 +1262,14 @@
                       </button>
                     </div>
                     <p class="text-xs text-[#86868B] line-through mt-0.5">Titular ausente: Prof. ${slot.regularTeacher}</p>
+                    <p class="text-xs text-[#86868B] mt-1">Quem selecionou o substituto? ${allocationEscape(slot.substituteSelectedBy || 'Não informado')}</p>
                   ` : ''}
                 </div>
               </div>
             </div>
 
             <!-- Ações Rápidas Estilo Apple iOS -->
-            <div class="flex items-center gap-2 self-end sm:self-center shrink-0 pt-1 sm:pt-0" onclick="event.stopPropagation()">
+            <div class="flex flex-wrap items-center justify-end gap-2 self-end sm:self-center shrink-0 pt-1 sm:pt-0" onclick="event.stopPropagation()">
 
               <!-- Ação quando não há professor titular fixado -->
               ${!hasTitular && isRegular ? `
@@ -1306,6 +1321,7 @@
 
               <!-- Ações quando está Substituído -->
               ${isSubstituido ? `
+                <button onclick="openBottomSheet('${slot.id}')" class="px-3 py-2 text-xs font-medium text-[#0071E3] bg-white border border-[#E5E5EA] hover:bg-[#F5F5F7] rounded-xl touch-target">Editar substituição</button>
                 <button onclick="removeSubstitute('${slot.id}')"
                   class="px-3 py-2 text-xs font-medium text-[#86868B] hover:text-red-600 bg-white border border-[#E5E5EA] hover:bg-red-50 rounded-xl transition-all active:scale-[0.97] flex items-center gap-1.5 touch-target">
                   <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
@@ -1573,7 +1589,7 @@
                           </div>
 
                           <div class="text-xs text-[#86868B] mt-1 flex items-center gap-2">
-                            <span>Turno da ${item.shift} (${item.slotLabel})</span>
+                            <span>Quem selecionou: ${allocationEscape(item.substituteSelectedBy || 'Não informado')} · Turno da ${item.shift} (${item.slotLabel})</span>
                             <span>·</span>
                             <span class="line-through">Titular: Prof. ${item.regularTeacher || 'Não cadastrado'}</span>
                           </div>
@@ -1655,6 +1671,9 @@
     // ==========================================
     // 15. BOTTOM SHEET TOUCH MOBILE
     // ==========================================
+    const SUBSTITUTE_RESPONSIBLE_ROLES = ['Diretor(a)', 'Vice-diretor(a)', 'Coordenador(a)'];
+    let allocationResponsibleRole = '';
+    let allocationTeacherName = '';
     let allocationReturnFocus = null;
     function allocationEscape(value) {
       return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
@@ -1664,11 +1683,14 @@
       return Object.values(state.slots).filter(slot => slot.status === 'falta');
     }
 
-    function openBottomSheet(slotId) {
+    function openBottomSheet(slotId, substituteName) {
       allocationReturnFocus = document.activeElement?.id;
       const slots = allocationSlots();
       const first = slots.find(slot => slot.day === state.selectedDay && slot.className === state.selectedClass && slot.shift === state.selectedShift) || slots.find(slot => slot.day === state.selectedDay) || slots[0];
       state.activeBottomSheetSlotId = slotId || first?.id || 'empty';
+      const selected = state.slots[state.activeBottomSheetSlotId];
+      allocationResponsibleRole = selected?.substituteSelectedBy || '';
+      allocationTeacherName = substituteName || selected?.substituteTeacher || '';
       renderApp();
       window.scrollTo({ top: 0, behavior: 'instant' });
       document.getElementById('allocationLesson')?.focus({ preventScroll: true });
@@ -1691,13 +1713,15 @@
     }
 
     function selectAllocationTeacher(index) {
-      document.getElementById('sheetNewSubInput').value = getSubName(state.teachers.substitutos[index]);
+      allocationTeacherName = getSubName(state.teachers.substitutos[index]);
+      document.getElementById('sheetNewSubInput').value = allocationTeacherName;
       document.getElementById('allocationConfirm').focus();
     }
 
     function renderBottomSheet() {
       const slot = state.slots[state.activeBottomSheetSlotId];
       const slots = allocationSlots();
+      if (slot?.status === 'substituido') slots.push(slot);
       const esc = allocationEscape;
       return `
         <main id="allocationDialog" aria-labelledby="allocationTitle" class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
@@ -1710,15 +1734,22 @@
               <form onsubmit="event.preventDefault(); addAndAssignFromSheet(state.activeBottomSheetSlotId)" class="p-5 space-y-4 md:border-r border-[#E5E5EA]">
                 <div class="space-y-2">
                   <label for="allocationLesson" class="block text-sm font-semibold">1. Professor ausente / aula</label>
-                  <select id="allocationLesson" ${slots.length ? '' : 'disabled'} onchange="state.activeBottomSheetSlotId = this.value; renderApp(); document.getElementById('sheetNewSubInput')?.focus({preventScroll:true})" class="touch-target w-full min-w-0 border border-[#D2D2D7] rounded-xl px-3 text-sm bg-white focus:ring-2 focus:ring-blue-200">
+                  <select id="allocationLesson" ${slots.length ? '' : 'disabled'} onchange="openBottomSheet(this.value)" class="touch-target w-full min-w-0 border border-[#D2D2D7] rounded-xl px-3 text-sm bg-white focus:ring-2 focus:ring-blue-200">
                     ${slots.length ? slots.map(item => `<option value="${esc(item.id)}" ${slot?.id === item.id ? 'selected' : ''}>${esc(item.regularTeacher || 'Sem titular')} · ${esc(item.day)} · ${esc(formatClassName(item.className))} · ${esc(item.timeRange)}</option>`).join('') : '<option>Nenhuma aula vaga</option>'}
                   </select>
                 </div>
                 ${slot ? `<dl class="grid grid-cols-2 gap-3 bg-[#F5F5F7] rounded-2xl p-4 text-xs"><div><dt class="text-[#6E6E73]">Dia / turno</dt><dd class="font-semibold mt-1">${esc(slot.day)} · ${esc(slot.shift)}</dd></div><div><dt class="text-[#6E6E73]">Turma / horário</dt><dd class="font-semibold mt-1">${esc(formatClassName(slot.className))} · ${esc(slot.timeRange)}</dd></div><div class="col-span-2"><dt class="text-[#6E6E73]">Professor ausente</dt><dd class="font-semibold mt-1">${esc(slot.regularTeacher || 'Sem titular cadastrado')}</dd></div></dl>` : '<p class="text-sm text-[#6E6E73]">Registre uma falta na grade para disponibilizar a aula aqui.</p>'}
                 <div class="space-y-2"><label for="sheetNewSubInput" class="block text-sm font-semibold">2. Professor substituto</label>
-                  <input required ${slot ? '' : 'disabled'} type="text" id="sheetNewSubInput" list="allocationTeacherOptions" placeholder="Busque ou digite o nome completo" class="touch-target w-full min-w-0 text-sm border border-[#D2D2D7] rounded-xl px-3 focus:ring-2 focus:ring-blue-200" />
+                  <input required ${slot ? '' : 'disabled'} type="text" id="sheetNewSubInput" value="${esc(allocationTeacherName)}" oninput="allocationTeacherName = this.value" list="allocationTeacherOptions" placeholder="Busque ou digite o nome completo" class="touch-target w-full min-w-0 text-sm border border-[#D2D2D7] rounded-xl px-3 focus:ring-2 focus:ring-blue-200" />
                   <datalist id="allocationTeacherOptions">${state.teachers.substitutos.map(sub => `<option value="${esc(getSubName(sub))}"></option>`).join('')}</datalist>
                   <p class="text-xs text-[#6E6E73]">Escolha um cadastro ou informe um novo nome. Confira a disponibilidade ao lado.</p>
+                </div>
+                <div class="space-y-2">
+                  <label for="allocationResponsible" class="block text-sm font-semibold">Quem selecionou o substituto?</label>
+                  <select id="allocationResponsible" required ${slot ? '' : 'disabled'} oninvalid="this.setCustomValidity('Selecione o responsável pela escolha do substituto.')" onchange="this.setCustomValidity(''); allocationResponsibleRole = this.value" class="touch-target w-full min-w-0 border border-[#D2D2D7] rounded-xl px-3 text-sm bg-white focus:ring-2 focus:ring-blue-200">
+                    <option value="">Selecione o responsável</option>
+                    ${SUBSTITUTE_RESPONSIBLE_ROLES.map(role => `<option value="${role}" ${allocationResponsibleRole === role ? 'selected' : ''}>${role}</option>`).join('')}
+                  </select>
                 </div>
                 <button id="allocationConfirm" ${slot ? '' : 'disabled'} class="touch-target w-full rounded-xl bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-50 text-white text-sm font-semibold px-4 py-3">Confirmar alocação</button>
               </form>
@@ -1748,7 +1779,13 @@
     function addAndAssignFromSheet(slotId) {
       const input = document.getElementById('sheetNewSubInput');
       const name = input ? input.value.trim() : '';
-      if (!name || !state.slots[slotId] || state.slots[slotId].status !== 'falta') return;
+      if (!name || !state.slots[slotId] || !['falta', 'substituido'].includes(state.slots[slotId].status)) return;
+      allocationResponsibleRole = document.getElementById('allocationResponsible')?.value || '';
+      if (!SUBSTITUTE_RESPONSIBLE_ROLES.includes(allocationResponsibleRole)) {
+        showToast('Selecione o responsável pela escolha do substituto.');
+        document.getElementById('allocationResponsible')?.reportValidity();
+        return;
+      }
       if (!state.teachers.substitutos.some(s => getSubName(s).toLowerCase() === name.toLowerCase())) {
         state.teachers.substitutos.push({ name, phone: '' });
       }
@@ -1792,7 +1829,7 @@
       if (name && state.slots[slotId]) {
         // Se a aula estiver em falta, aloca o substituto
         if (state.slots[slotId].status === 'falta' || state.slots[slotId].status === 'substituido') {
-          attemptAssignSubstitute(slotId, name);
+          openBottomSheet(slotId, name);
         } else {
           showToast('Para alocar substituto, registre a falta primeiro ou defina a aula como vaga.');
         }

@@ -34,7 +34,7 @@ export default async (request: Request) => {
     if (!data || !Array.isArray(data.teachers?.titulares) || !Array.isArray(data.teachers?.substitutos) ||
         !data.teachers.titulares.every(text) || !data.teachers.substitutos.every((s: any) => s && text(s.name) && text(s.phone)) ||
         !data.slots || typeof data.slots !== 'object' || Array.isArray(data.slots) ||
-        !Object.values(data.slots).every((s: any) => s && text(s.id) && text(s.day) && text(s.shift) && text(s.className) && text(s.slotId) && text(s.slotLabel) && text(s.timeRange) && text(s.regularTeacher) && ['regular', 'falta', 'substituido'].includes(s.status) && (s.substituteTeacher === null || text(s.substituteTeacher)))) {
+        !Object.values(data.slots).every((s: any) => s && text(s.id) && text(s.day) && text(s.shift) && text(s.className) && text(s.slotId) && text(s.slotLabel) && text(s.timeRange) && text(s.regularTeacher) && ['regular', 'falta', 'substituido'].includes(s.status) && (s.substituteTeacher === null || text(s.substituteTeacher)) && (s.substituteSelectedBy == null || ['Diretor(a)', 'Vice-diretor(a)', 'Coordenador(a)'].includes(s.substituteSelectedBy)))) {
       return respond({ error: 'Dados inválidos' }, 400);
     }
     await db.insert(schedules).values({ id, data }).onConflictDoUpdate({ target: schedules.id, set: { data } });
