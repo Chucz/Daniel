@@ -4,7 +4,13 @@ import { schedules, scheduleAudit } from '../../db/schema.js';
 import { getSessionUser, digest } from '../lib/auth.mjs';
 const SHARED_SCHEDULE_ID = '00000000-0000-4000-8000-000000000001';
 const emptySchedule = () => ({teachers:{titulares:[],substitutos:[]},slots:{}});
-const revision = (data: unknown) => `"${digest(JSON.stringify(data))}"`;
+// JSONB may reorder object keys; a revision must depend on content, not property order.
+function canonicalJson(value: any): string {
+  if (Array.isArray(value)) return '['+value.map(canonicalJson).join(',')+']';
+  if (value && typeof value==='object') return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonicalJson(value[key])).join(',')+'}';
+  return JSON.stringify(value);
+}
+const revision = (data: unknown) => '\"'+digest(canonicalJson(data))+'\"';
 const roles = ['Diretor(a)','Vice-diretor(a)','Coordenador(a)'];
 const legacyClasses: Record<string,string> = {'9º Ano A':'9º Ano EF','6º Ano A':'6º Ano EF','7º Ano A':'7º Ano EF','8º Ano A':'8º Ano EF','1º EM A':'1º Ano EM','2º EM A':'2º Ano EM','3º EM A':'3º Ano EM','1º EM D':'1º Ano EM','2º EM D':'2º Ano EM','3º EM D':'3º Ano EM','2º Técnico':'2º Ano EM Técnico','3º Técnico':'3º Ano EM Técnico'};
 export default async (request: Request) => {
